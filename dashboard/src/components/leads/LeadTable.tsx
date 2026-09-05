@@ -292,7 +292,7 @@ function LeadDetails({ lead, threshold }: { lead: Lead; threshold: number }) {
               href={lead.website}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 text-accent hover:underline"
+              className="inline-flex items-center gap-1.5 text-accent-text hover:underline"
             >
               Visit website
               <ExternalLink size={12} />

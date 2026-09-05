@@ -39,7 +39,7 @@ export function KpiCard({
   return (
     <div className="flex items-center gap-3.5 rounded-card border border-border bg-bg px-4 py-4">
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-light">
-        <Icon size={19} className="text-accent" strokeWidth={1.75} />
+        <Icon size={19} className="text-accent-text" strokeWidth={1.75} />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-meta text-secondary">{label}</span>
@@ -134,7 +134,7 @@ export function PanelEmpty({
       )}
     >
       <span className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-accent-soft">
-        <Icon size={24} className="text-accent" strokeWidth={1.75} />
+        <Icon size={24} className="text-accent-text" strokeWidth={1.75} />
       </span>
       <h3 className="text-section font-bold text-primary">{title}</h3>
       <p className="mt-2 max-w-md text-body text-tertiary">{body}</p>

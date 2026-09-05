@@ -13,6 +13,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { ThemeProvider } from "@/hooks/useTheme";
 import { WorkspaceProvider } from "@/hooks/useWorkspace";
 import { ConnectionsPage } from "@/pages/settings/Connections";
 import { EmailPage } from "@/pages/Email";
@@ -28,42 +29,44 @@ export function App() {
       // means the router's semantics will not change under us on a bump.
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
-      <WorkspaceProvider>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/email" element={<EmailPage />} />
-            <Route path="/linkedin" element={<LinkedInPage />} />
-            <Route path="/settings" element={<ConnectionsPage />} />
+      <ThemeProvider>
+        <WorkspaceProvider>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/leads" element={<LeadsPage />} />
+              <Route path="/email" element={<EmailPage />} />
+              <Route path="/linkedin" element={<LinkedInPage />} />
+              <Route path="/settings" element={<ConnectionsPage />} />
 
-            {/* Where the old routes went. */}
-            <Route path="/find" element={<Navigate to="/" replace />} />
-            <Route path="/agent" element={<Navigate to="/" replace />} />
-            <Route path="/agent/runs/:id" element={<Navigate to="/" replace />} />
-            <Route path="/leads/:id" element={<Navigate to="/leads" replace />} />
-            <Route path="/campaigns" element={<Navigate to="/leads" replace />} />
-            <Route path="/outreach" element={<Navigate to="/email" replace />} />
-            <Route path="/outreach/email" element={<Navigate to="/email" replace />} />
-            <Route path="/outreach/linkedin" element={<Navigate to="/linkedin" replace />} />
-            <Route path="/outreach/approvals" element={<Navigate to="/email" replace />} />
-            <Route path="/outreach/follow-ups" element={<Navigate to="/email" replace />} />
-            <Route path="/approvals" element={<Navigate to="/email" replace />} />
-            <Route path="/follow-ups" element={<Navigate to="/email" replace />} />
-            <Route path="/results" element={<Navigate to="/leads" replace />} />
-            <Route path="/results/performance" element={<Navigate to="/leads" replace />} />
-            <Route path="/results/activity" element={<Navigate to="/leads" replace />} />
-            <Route path="/analytics" element={<Navigate to="/leads" replace />} />
-            <Route path="/activity" element={<Navigate to="/leads" replace />} />
-            <Route path="/settings/connections" element={<Navigate to="/settings" replace />} />
-            <Route path="/settings/profile" element={<Navigate to="/settings" replace />} />
-            <Route path="/settings/targeting" element={<Navigate to="/settings" replace />} />
-            <Route path="/settings/leo" element={<Navigate to="/settings" replace />} />
+              {/* Where the old routes went. */}
+              <Route path="/find" element={<Navigate to="/" replace />} />
+              <Route path="/agent" element={<Navigate to="/" replace />} />
+              <Route path="/agent/runs/:id" element={<Navigate to="/" replace />} />
+              <Route path="/leads/:id" element={<Navigate to="/leads" replace />} />
+              <Route path="/campaigns" element={<Navigate to="/leads" replace />} />
+              <Route path="/outreach" element={<Navigate to="/email" replace />} />
+              <Route path="/outreach/email" element={<Navigate to="/email" replace />} />
+              <Route path="/outreach/linkedin" element={<Navigate to="/linkedin" replace />} />
+              <Route path="/outreach/approvals" element={<Navigate to="/email" replace />} />
+              <Route path="/outreach/follow-ups" element={<Navigate to="/email" replace />} />
+              <Route path="/approvals" element={<Navigate to="/email" replace />} />
+              <Route path="/follow-ups" element={<Navigate to="/email" replace />} />
+              <Route path="/results" element={<Navigate to="/leads" replace />} />
+              <Route path="/results/performance" element={<Navigate to="/leads" replace />} />
+              <Route path="/results/activity" element={<Navigate to="/leads" replace />} />
+              <Route path="/analytics" element={<Navigate to="/leads" replace />} />
+              <Route path="/activity" element={<Navigate to="/leads" replace />} />
+              <Route path="/settings/connections" element={<Navigate to="/settings" replace />} />
+              <Route path="/settings/profile" element={<Navigate to="/settings" replace />} />
+              <Route path="/settings/targeting" element={<Navigate to="/settings" replace />} />
+              <Route path="/settings/leo" element={<Navigate to="/settings" replace />} />
 
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
-      </WorkspaceProvider>
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </WorkspaceProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }

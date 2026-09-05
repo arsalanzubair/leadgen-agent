@@ -12,16 +12,24 @@
  */
 
 import * as Popover from "@radix-ui/react-popover";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, Monitor, Moon, Sun } from "lucide-react";
 import * as React from "react";
 
 import { Button, Input, Label } from "@/components/ui/primitives";
+import { useTheme, type Theme } from "@/hooks/useTheme";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { initials, truncate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
+
 export function AccountMenu({ collapsed }: { collapsed: boolean }) {
   const { profile, saveProfile, offline } = useWorkspace();
+  const { theme, setTheme } = useTheme();
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState(profile.sender_name);
   const [email, setEmail] = React.useState(profile.sender_email);
@@ -70,7 +78,7 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
             collapsed ? "h-11 justify-center" : "h-14 gap-2.5 px-2",
           )}
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-micro font-semibold text-accent">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-micro font-semibold text-accent-text">
             {displayName ? initials(displayName) : "?"}
           </span>
           {!collapsed ? (
@@ -96,6 +104,43 @@ export function AccountMenu({ collapsed }: { collapsed: boolean }) {
           sideOffset={8}
           className="z-50 w-[300px] rounded-card border border-border bg-bg p-4 shadow-raised"
         >
+          {/*
+            Appearance sits above the identity fields because it is the thing
+            somebody opens this menu to change often, and it applies
+            immediately -- there is no Save for it, and there should not be.
+          */}
+          <p className="text-meta font-semibold text-primary">Appearance</p>
+          <div
+            role="radiogroup"
+            aria-label="Theme"
+            className="mt-2 grid grid-cols-3 gap-1 rounded-control border border-border bg-surface-raised p-1"
+          >
+            {THEME_OPTIONS.map((option) => {
+              const active = theme === option.value;
+              const Icon = option.icon;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setTheme(option.value)}
+                  className={cn(
+                    "flex flex-col items-center gap-1 rounded-[4px] py-2 text-micro font-medium transition-colors duration-150",
+                    active
+                      ? "bg-bg text-primary shadow-soft"
+                      : "text-secondary hover:text-primary",
+                  )}
+                >
+                  <Icon size={15} className={active ? "text-accent-text" : undefined} />
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="my-4 h-px bg-border" />
+
           <p className="text-meta font-semibold text-primary">Your details</p>
           <p className="mt-1 text-micro text-tertiary">
             Outreach goes out under this name and address.

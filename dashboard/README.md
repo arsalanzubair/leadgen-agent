@@ -221,6 +221,30 @@ Typeface is Inter throughout. **No monospace anywhere, and no tabular
 numerals**: `.num` survives as an empty class so its call sites keep compiling,
 and figures now render in the same face as the prose around them.
 
+### Light, dark, and system
+
+Three states, not two. The choice lives in the account row at the bottom of the
+rail, is stored under `leadflow.theme`, and is stamped on `<html>` as
+`data-theme` — with **"system" removing the attribute rather than setting a
+third value**, which is what lets the whole dark theme be a media query plus
+one explicit override instead of three branches to keep in sync.
+
+Every token gets its value on bare `:root`; the dark blocks only ever
+*redefine*. A colour whose sole definition sits inside a media query is a
+colour that vanishes the moment somebody picks the other theme.
+
+`index.html` carries a tiny inline script that stamps the saved theme **before
+the first paint**. Without it the page renders light for one frame and flips,
+which is worse than never having offered a dark theme at all.
+
+**The fill and the text are two separate accent tokens**, and this is the part
+that is easy to get wrong. `--accent` is the button fill and has to stay dark
+enough for white to clear 4.5:1 on top of it, so it does *not* change between
+themes. `--accent-text` is the same teal used as type, and on a near-black page
+it has to get lighter or it fails against the background — `#20808D` on
+`#0F1316` is 4.1:1, while the dark theme's `#45B8C8` is 8.0:1. One token cannot
+do both jobs, which is why `text-accent` is not a class this codebase uses.
+
 **Deliberately absent**, all of which the previous design had: dark surfaces,
 heatmap cells, thick coloured section dividers, a second accent, and the
 direction-aware KPI delta. A number on a card is now a number.

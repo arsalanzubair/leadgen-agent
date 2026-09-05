@@ -451,7 +451,7 @@ function StateTag({ lead, state }: { lead: Lead; state: RowState }) {
 
   const tone =
     state === "review"
-      ? "border-accent/30 bg-accent-soft text-accent"
+      ? "border-accent/30 bg-accent-soft text-accent-text"
       : state === "replied"
         ? "border-success/30 bg-success-muted text-success"
         : "border-border bg-surface-raised text-secondary";

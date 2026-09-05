@@ -15,14 +15,20 @@
    slate scale rather than one-off hex values, so a border and a muted label
    are provably the same greys used everywhere else.
 
-   Deliberately absent: dark surfaces, heatmap cells, thick coloured dividers,
-   tabular numerals, any second accent. Emphasis comes from weight, size and
-   space -- the teal is spent on exactly one primary action per screen.
+   Deliberately absent: heatmap cells, thick coloured dividers, tabular
+   numerals, any second accent. Emphasis comes from weight, size and space --
+   the teal is spent on exactly one primary action per screen.
+
+   THREE theme states, and the rule that keeps them honest: every token gets
+   its value on bare `:root`. The dark blocks only ever REDEFINE. A colour
+   whose sole definition lives inside a media query is a colour that vanishes
+   the moment somebody picks the other theme.
    -------------------------------------------------------------------------- */
 :root {
   /* Neutrals -- Tailwind slate */
   --bg: #ffffff; /* sidebar, cards, the Home screen */
   --bg-page: #f8fafc; /* slate-50 -- the base under Leads/Email/LinkedIn */
+  --bg-home-mid: #fafcfc; /* the middle stop of Home's gradient */
   --surface: #ffffff;
   /* A card sitting on the page needs no second tone; "raised" is the hover and
      fill grey, which is the page colour lifted onto a white card. */
@@ -36,15 +42,22 @@
   --text-secondary: #475569;
   --text-muted: #64748b;
 
-  /* Accent -- one custom teal, and nothing else competes with it. */
-  --accent: #20808d;
+  /*
+    Accent -- one custom teal, and nothing else competes with it.
+
+    `--accent` is the FILL and `--accent-text` is the same teal used as text.
+    They are separate tokens because they have different jobs in the dark
+    theme: the fill has to keep white legible on top of it, which means it
+    cannot get lighter, while teal text on a near-black page has to get
+    lighter or it fails against the background. One token cannot do both.
+  */
+  --accent: #20808d; /* white on this is 4.6:1 */
+  --accent-text: #20808d;
   --accent-hover: #1a6b76;
   --accent-active: #155760;
   --accent-light-bg: #f0fdfa; /* icon badge fill */
   --accent-soft-bg: #e6f5f6; /* empty-state badge fill */
   --accent-logo-lt: #39c8c2; /* the logo mark's gradient highlight, only */
-  /* Text on top of a filled accent surface. The teal is dark enough that white
-     clears 4.5:1 comfortably. */
   --accent-contrast: #ffffff;
 
   /* Status. Muted enough to sit inside a light card without shouting. */
@@ -55,7 +68,91 @@
   --danger: #b91c1c;
   --danger-muted: #fef2f2;
 
+  /* The sweep across a loading skeleton. */
+  --shimmer: rgba(255, 255, 255, 0.7);
+  /* The scrim behind the mobile navigation drawer. */
+  --scrim: rgba(15, 23, 42, 0.3);
+
   color-scheme: light;
+}
+
+/* --------------------------------------------------------------------------
+   Dark.
+
+   Written once, in @mixin spirit, and applied from two places: the explicit
+   choice (`data-theme="dark"`) and the system preference when no explicit
+   choice has been made. The `:not([data-theme="light"])` guard is what stops
+   a system-dark machine from overriding somebody who deliberately picked
+   light.
+   -------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14181c;
+    --bg-page: #0f1316;
+    --bg-home-mid: #12171b;
+    --surface: #14181c;
+    --surface-raised: #1b2126;
+    --surface-sunken: #232b31;
+
+    --border: #262f36;
+    --border-strong: #37424b;
+
+    --text-primary: #e8edf2;
+    --text-secondary: #a3b0bc;
+    --text-muted: #7d8b98;
+
+    --accent-text: #45b8c8;
+    --accent-hover: #268f9e;
+    --accent-active: #2ea3b3;
+    --accent-light-bg: #12333a;
+    --accent-soft-bg: #163b43;
+
+    --success: #4ade80;
+    --success-muted: #0f2a1b;
+    --warning: #fbbf24;
+    --warning-muted: #2f2410;
+    --danger: #f87171;
+    --danger-muted: #2f1717;
+
+    --shimmer: rgba(255, 255, 255, 0.06);
+    --scrim: rgba(0, 0, 0, 0.6);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #14181c;
+  --bg-page: #0f1316;
+  --bg-home-mid: #12171b;
+  --surface: #14181c;
+  --surface-raised: #1b2126;
+  --surface-sunken: #232b31;
+
+  --border: #262f36;
+  --border-strong: #37424b;
+
+  --text-primary: #e8edf2;
+  --text-secondary: #a3b0bc;
+  --text-muted: #7d8b98;
+
+  --accent-text: #45b8c8;
+  --accent-hover: #268f9e;
+  --accent-active: #2ea3b3;
+  --accent-light-bg: #12333a;
+  --accent-soft-bg: #163b43;
+
+  --success: #4ade80;
+  --success-muted: #0f2a1b;
+  --warning: #fbbf24;
+  --warning-muted: #2f2410;
+  --danger: #f87171;
+  --danger-muted: #2f1717;
+
+  --shimmer: rgba(255, 255, 255, 0.06);
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
 }
 
 * {
@@ -93,7 +190,7 @@ body {
 
 /* --- focus ---------------------------------------------------------------- */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -117,7 +214,7 @@ body {
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--text-muted);
   background-clip: content-box;
 }
 

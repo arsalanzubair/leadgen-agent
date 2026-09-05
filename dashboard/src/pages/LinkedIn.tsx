@@ -405,7 +405,7 @@ function ReviewRow({
         detail={lead.contact_name || "Contact unknown"}
         tag={{
           label: "Waiting for review",
-          tone: "border-accent/30 bg-accent-soft text-accent",
+          tone: "border-accent/30 bg-accent-soft text-accent-text",
         }}
         testMode={lead.dry_run}
         open={open}
@@ -529,7 +529,7 @@ function QueueRow({
 
   const tag =
     item.status === "pending"
-      ? { label: "Ready to send", tone: "border-accent/30 bg-accent-soft text-accent" }
+      ? { label: "Ready to send", tone: "border-accent/30 bg-accent-soft text-accent-text" }
       : item.status === "sent"
         ? {
             label: "Waiting to connect",

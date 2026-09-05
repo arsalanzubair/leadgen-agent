@@ -110,7 +110,7 @@ export function HomePage() {
         <h1 className="text-[32px] font-bold leading-tight tracking-tight text-primary sm:text-greeting">
           {firstName ? (
             <>
-              Hey, <span className="text-accent">{firstName}</span>
+              Hey, <span className="text-accent-text">{firstName}</span>
             </>
           ) : (
             "Hey there"

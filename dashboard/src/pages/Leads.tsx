@@ -29,6 +29,12 @@ import { PageHeader } from "@/components/layout/AppShell";
 import { LeadTable, type SortKey } from "@/components/leads/LeadTable";
 import { Button, Card, Input, Select } from "@/components/ui/primitives";
 import { KpiCard, KpiRow, ListHeader, PanelEmpty, TabPills } from "@/components/ui/patterns";
+import {
+  DEFAULT_RANGE,
+  DateRangeMenu,
+  withinRange,
+  type RangeKey,
+} from "@/components/ui/DateRangeMenu";
 import { ErrorState, SkeletonTable } from "@/components/ui/states";
 import { useAsync } from "@/hooks/useAsync";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -40,26 +46,10 @@ import type { AgentRun } from "@/types/agent";
 import type { Channel, Lead, Region } from "@/types/lead";
 
 type Tab = "filtered" | "all";
-type RangeKey = "7d" | "30d" | "90d" | "all";
 type SortOrder = "newest" | "oldest" | "largest";
-
-const RANGES: { value: RangeKey; label: string; days: number | null }[] = [
-  { value: "7d", label: "Last 7 days", days: 7 },
-  { value: "30d", label: "Last 30 days", days: 30 },
-  { value: "90d", label: "Last 90 days", days: 90 },
-  { value: "all", label: "All time", days: null },
-];
 
 /** Sources that put a business on a map, as opposed to a contact database. */
 const MAPPED_SOURCES = new Set(["google_places", "osm"]);
-
-function withinRange(iso: string | null, days: number | null): boolean {
-  if (days === null) return true;
-  if (!iso) return false;
-  const at = new Date(iso).getTime();
-  if (Number.isNaN(at)) return false;
-  return Date.now() - at <= days * 86_400_000;
-}
 
 export function LeadsPage() {
   const { scope, rules, niches } = useWorkspace();
@@ -68,7 +58,7 @@ export function LeadsPage() {
   const [showFilters, setShowFilters] = React.useState(false);
 
   const tab = (params.get("tab") ?? "filtered") as Tab;
-  const range = (params.get("range") ?? "7d") as RangeKey;
+  const range = (params.get("range") ?? DEFAULT_RANGE) as RangeKey;
   const region = (params.get("region") ?? "all") as Region | "all";
   const nicheId = params.get("niche_id") ?? "all";
   const channel = (params.get("channel") ?? "all") as Channel | "all";
@@ -102,6 +92,18 @@ export function LeadsPage() {
     setParams(next, { replace: true });
   };
 
+  /**
+   * The date range has the same problem for the same reason: "All time" is
+   * spelled `all`, which `setParam` treats as "no value" and drops -- so
+   * picking it would silently snap back to the seven-day default.
+   */
+  const setRange = (value: RangeKey) => {
+    const next = new URLSearchParams(params);
+    if (value === DEFAULT_RANGE) next.delete("range");
+    else next.set("range", value);
+    setParams(next, { replace: true });
+  };
+
   const clearAll = () => setParams(new URLSearchParams(), { replace: true });
 
   const leads = useAsync(
@@ -118,8 +120,6 @@ export function LeadsPage() {
   );
   const runs = useAsync(() => api.getAgentRuns(scope), [scope.tenant_id]);
 
-  const days = RANGES.find((r) => r.value === range)?.days ?? null;
-
   const active = React.useMemo(
     () => (leads.data ?? []).filter(isActive),
     [leads.data],
@@ -127,8 +127,8 @@ export function LeadsPage() {
 
   /** Everything the KPI row counts, over the chosen window. */
   const inWindow = React.useMemo(
-    () => active.filter((lead) => withinRange(lead.discovered_at, days)),
-    [active, days],
+    () => active.filter((lead) => withinRange(lead.discovered_at, range)),
+    [active, range],
   );
 
   const stats = React.useMemo(() => summarise(inWindow), [inWindow]);
@@ -154,7 +154,7 @@ export function LeadsPage() {
   const visibleRuns = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
     const list = (runs.data ?? [])
-      .filter((run) => withinRange(run.started_at, days))
+      .filter((run) => withinRange(run.started_at, range))
       .filter((run) => !needle || run.prompt.toLowerCase().includes(needle));
 
     const sorted = [...list];
@@ -165,7 +165,7 @@ export function LeadsPage() {
       return order === "oldest" ? at - bt : bt - at;
     });
     return sorted;
-  }, [runs.data, days, search, order]);
+  }, [runs.data, range, search, order]);
 
   const onSort = (key: SortKey) => {
     const next = new URLSearchParams(params);
@@ -187,18 +187,7 @@ export function LeadsPage() {
         subtitle="View and manage all the leads you've discovered."
         actions={
           <>
-            <Select
-              aria-label="Date range"
-              value={range}
-              onChange={(event) => setParam("range", event.target.value)}
-              className="h-10 pl-9 bg-[url('data:image/svg+xml;utf8,<svg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2216%22%20height=%2216%22%20fill=%22none%22%20stroke=%22%2364748B%22%20stroke-width=%221.6%22><rect%20x=%222.5%22%20y=%223.5%22%20width=%2211%22%20height=%2210%22%20rx=%222%22/><path%20d=%22M2.5%206.5h11M5.5%202v3M10.5%202v3%22/></svg>')] bg-[left_10px_center,right_8px_center] bg-no-repeat"
-            >
-              {RANGES.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
+            <DateRangeMenu value={range} onChange={setRange} />
 
             <Button
               variant={showFilters ? "outline" : "secondary"}
@@ -294,7 +283,7 @@ export function LeadsPage() {
           <button
             type="button"
             onClick={() => setParam("list", "")}
-            className="text-meta text-accent hover:underline"
+            className="text-meta text-accent-text hover:underline"
           >
             Show everything
           </button>

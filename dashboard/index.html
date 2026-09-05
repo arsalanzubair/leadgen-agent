@@ -1,10 +1,33 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>LeadFlow</title>
+    <script>
+      /*
+        Stamp the saved theme before the first paint.
+
+        Without this the page renders light for one frame and then flips to
+        dark once React mounts -- a white flash on every navigation, which is
+        exactly what somebody who chose a dark theme is trying to avoid.
+
+        The key and the values are the ones in src/hooks/useTheme.tsx. "system"
+        deliberately stamps nothing, so the media query in index.css decides.
+      */
+      (function () {
+        try {
+          var choice = localStorage.getItem("leadflow.theme");
+          if (choice === "light" || choice === "dark") {
+            document.documentElement.setAttribute("data-theme", choice);
+          }
+        } catch (error) {
+          /* Storage blocked. Fall through to the system preference. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

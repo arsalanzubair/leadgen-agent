@@ -12,7 +12,7 @@
 
 import { ChevronDown, PanelLeft, Search, X } from "lucide-react";
 import * as React from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 
 import { AccountMenu } from "./AccountMenu";
 import { NAV, SETTINGS_ITEM, isActive } from "./nav";
@@ -58,19 +58,39 @@ export function Sidebar({
           collapsed ? "justify-center px-2" : "gap-2 pl-5 pr-3",
         )}
       >
-        <LogoMark size={26} />
-        {!collapsed ? (
-          <>
+        {/*
+          The mark and the wordmark are one link home, the way a masthead is
+          on every other product. Collapsed, the mark alone still is.
+        */}
+        <Link
+          to="/"
+          onClick={onNavigate}
+          aria-label={`${custom || PRODUCT_NAME} home`}
+          className={cn(
+            "flex min-w-0 items-center gap-2 rounded-control transition-opacity duration-150 hover:opacity-80",
+            collapsed ? "justify-center" : "flex-1",
+          )}
+        >
+          <LogoMark size={26} />
+          {!collapsed ? (
             <span className="min-w-0 flex-1 truncate text-[19px] font-bold tracking-tight">
               {custom ? (
                 <span className="text-primary">{truncate(custom, 16)}</span>
               ) : (
                 <>
+                  {/* Theme-aware on purpose: this half is near-black on the
+                      light theme and near-white on the dark one. A hardcoded
+                      colour here is invisible in one of the two. */}
                   <span className="text-primary">Lead</span>
-                  <span className="text-accent">Flow</span>
+                  <span className="text-accent-text">Flow</span>
                 </>
               )}
             </span>
+          ) : null}
+        </Link>
+
+        {!collapsed ? (
+          <>
             <button
               type="button"
               onClick={() => {

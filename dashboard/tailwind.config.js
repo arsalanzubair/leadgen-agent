@@ -15,6 +15,7 @@ export default {
       colors: {
         bg: "var(--bg)",
         "bg-page": "var(--bg-page)",
+        "bg-home-mid": "var(--bg-home-mid)",
         surface: "var(--surface)",
         "surface-raised": "var(--surface-raised)",
         "surface-sunken": "var(--surface-sunken)",
@@ -27,7 +28,10 @@ export default {
           DEFAULT: "var(--accent)",
           hover: "var(--accent-hover)",
           active: "var(--accent-active)",
-          text: "var(--accent)",
+          // The fill and the text are separate tokens: in dark the fill must
+          // stay dark enough for white to sit on it, while teal text must get
+          // lighter to clear the near-black page. See index.css.
+          text: "var(--accent-text)",
           contrast: "var(--accent-contrast)",
           light: "var(--accent-light-bg)",
           soft: "var(--accent-soft-bg)",

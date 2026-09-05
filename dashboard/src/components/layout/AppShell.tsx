@@ -13,7 +13,7 @@
 
 import { Menu } from "lucide-react";
 import * as React from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { LogoMark } from "@/components/ui/LogoMark";
 import { Sidebar } from "./Sidebar";
@@ -66,7 +66,7 @@ export function AppShell() {
           <button
             type="button"
             aria-label="Close navigation"
-            className="absolute inset-0 bg-slate-900/30"
+            className="absolute inset-0 bg-[var(--scrim)]"
             onClick={() => setDrawerOpen(false)}
           />
           <div className="absolute left-0 top-0 h-full animate-fade-in shadow-raised">
@@ -89,18 +89,24 @@ export function AppShell() {
           >
             <Menu size={19} />
           </button>
-          <LogoMark size={22} />
-          <span className="text-[17px] font-bold tracking-tight">
-            <span className="text-primary">Lead</span>
-            <span className="text-accent">Flow</span>
-          </span>
+          <Link
+            to="/"
+            aria-label="LeadFlow home"
+            className="flex items-center gap-2 transition-opacity duration-150 hover:opacity-80"
+          >
+            <LogoMark size={22} />
+            <span className="text-[17px] font-bold tracking-tight">
+              <span className="text-primary">Lead</span>
+              <span className="text-accent-text">Flow</span>
+            </span>
+          </Link>
         </header>
 
         <main
           className={cn(
             "min-h-0 flex-1 overflow-y-auto",
             isHome
-              ? "bg-gradient-to-b from-bg via-[#FAFCFC] to-bg-page"
+              ? "bg-gradient-to-b from-bg via-bg-home-mid to-bg-page"
               : "bg-bg-page",
           )}
         >
