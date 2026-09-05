@@ -1,0 +1,444 @@
+# =============================================================================
+# example_tenant.yaml -- a complete, realistic tenant configuration.
+#
+# Copy this file to config/tenants/<your_tenant_id>.yaml and edit. The filename
+# MUST match `tenant_id` exactly: everything else this tenant owns (checkpoint
+# database, suppression list, CRM sheet, counters, LinkedIn queue) is resolved
+# from that id and nothing is shared across tenants.
+#
+# N0 validates this file and HALTS the batch naming any missing required field.
+# It never silently defaults a required value.
+# =============================================================================
+
+tenant_id: example_tenant
+display_name: "[your business name - set in Settings]"
+schema_version: 1
+
+# -----------------------------------------------------------------------------
+# Regions this tenant operates in. Each must have a profile in
+# config/compliance_profiles.yaml and an entry in language_map below.
+# -----------------------------------------------------------------------------
+regions:
+  - US
+  - UK
+  - EU
+  - CA
+  - AU
+  - ME
+
+# Region -> language the outreach is written in. N4 localises through
+# integrations/translation.py whenever this is not 'en'.
+language_map:
+  US: en
+  UK: en
+  EU: fr        # this tenant's EU push is France-first; use de/nl/es as needed
+  CA: en
+  AU: en
+  ME: en        # English is standard for UAE/Saudi B2B; set 'ar' to localise
+
+# -----------------------------------------------------------------------------
+# Niches. Each is an ICP definition the qualification node (N3) scores against.
+#
+# `channel_default` tells N3.5 which channel this audience prefers when a lead
+# is reachable BOTH ways. It is an explicit field on purpose: it used to be
+# inferred from an `id` prefix convention (local_* meant email, b2b_* meant
+# LinkedIn), which breaks silently for any id the convention did not
+# anticipate -- and once audiences are created through the dashboard, the ids
+# are whatever the user called them.
+# -----------------------------------------------------------------------------
+niches:
+
+  - id: local_dental
+    label: Dental clinics
+    type: local_business
+    channel_default: email
+    # Search terms handed to Google Places / OSM by N1.
+    discovery:
+      search_terms:
+        - dental clinic
+        - dentist
+        - orthodontist
+      # Cities to search, per region. N1 skips a region with no cities listed.
+      locations:
+        US: [Austin TX, Denver CO, Charlotte NC]
+        UK: [Manchester, Leeds, Bristol]
+        CA: [Toronto ON, Ottawa ON]
+        AU: [Melbourne VIC, Brisbane QLD]
+      max_results_per_location: 20
+      # N1 tags the batch `low_yield` below this many NEW leads per target.
+      min_expected_leads: 5
+    icp:
+      description: >-
+        Owner-operated or small-group dental practices with a visible digital
+        service gap - specifically missing or broken online booking, no
+        after-hours enquiry capture, and unmanaged review responses. They have
+        real patient demand and are losing enquiries to friction, not to lack
+        of marketing spend.
+      must_have:
+        - a working website
+        - a public phone number or contact form
+      good_signals:
+        - no online booking system
+        - booking widget broken on mobile
+        - no live chat or after-hours enquiry capture
+        - unanswered Google reviews
+        - hiring front-desk or treatment coordinator staff
+        - site not mobile responsive
+      disqualifiers:
+        - part of a national chain with 20+ locations
+        - already running a named AI receptionist or chatbot vendor
+        - permanently closed
+      size_hint: 1-4 locations
+    tone: >-
+      Direct, warm, practical. Talk about missed patient enquiries, not
+      "digital transformation". No jargon, no exclamation marks, British
+      spelling for UK and AU.
+
+  - id: local_salon
+    label: Hair and beauty salons
+    type: local_business
+    channel_default: email
+    discovery:
+      search_terms:
+        - hair salon
+        - beauty salon
+        - hairdresser
+      locations:
+        UK: [Leeds, Bristol]
+        EU: [Paris, Lyon]
+        AU: [Melbourne VIC, Sydney NSW]
+      max_results_per_location: 20
+      min_expected_leads: 5
+    icp:
+      description: >-
+        Independent salons with two or more stylists that take bookings by
+        phone, DM or a link-in-bio tool rather than a real booking system. The
+        gap is lost off-hours bookings and no-show churn, not brand awareness.
+      must_have:
+        - an active online presence (website or a business Instagram)
+      good_signals:
+        - bookings taken by phone or Instagram DM only
+        - Linktree or link-in-bio instead of a booking system
+        - no deposit or no-show protection mentioned
+        - posts regularly but has no lead capture
+        - no English-language version despite an international clientele
+      disqualifiers:
+        - franchise with 20+ locations
+        - already using Fresha, Treatwell or Booksy
+        - permanently closed
+      size_hint: 2-8 stylists
+    tone: >-
+      Friendly and concrete. Talk about missed bookings and no-shows, never
+      "brand strategy". Short sentences.
+
+  - id: local_gym
+    label: Gyms and fitness studios
+    type: local_business
+    channel_default: email
+    discovery:
+      search_terms:
+        - gym
+        - fitness studio
+        - personal training studio
+      locations:
+        US: [Austin TX, Denver CO]
+        UK: [Manchester]
+        ME: [Dubai, Abu Dhabi, Riyadh]
+        AU: [Melbourne VIC]
+      max_results_per_location: 20
+      min_expected_leads: 5
+    icp:
+      description: >-
+        Independent gyms and boutique studios where trial signups and class
+        bookings leak between the enquiry and the first session. The buying
+        signal is manual timetable and trial handling, not low foot traffic.
+      must_have:
+        - a working website or class timetable page
+      good_signals:
+        - class timetable is a static PDF or image
+        - trial signup goes to a shared inbox with no autoresponder
+        - no automated follow-up on lapsed members mentioned
+        - no Arabic or local-language version despite local-language advertising
+        - membership enquiries handled by phone only
+      disqualifiers:
+        - national chain with 20+ locations
+        - already running a named AI or automation vendor
+        - permanently closed
+      size_hint: 1-3 locations
+    tone: >-
+      Plain and energetic without hype. Talk about trials that never convert
+      and admin time lost at the front desk.
+
+  - id: b2b_saas_ops
+    label: B2B SaaS - support and onboarding operations
+    type: b2b
+    channel_default: linkedin
+    discovery:
+      # Role-based targeting for B2B. Fed to Apollo, or matched against a
+      # hand-exported Sales Navigator CSV.
+      titles:
+        - Head of Customer Success
+        - VP Customer Experience
+        - Director of Support
+        - Head of Support Operations
+        - COO
+      employee_range: [20, 300]
+      industries:
+        - Computer Software
+        - Information Technology & Services
+      locations:
+        US: [United States]
+        UK: [United Kingdom]
+        EU: [Germany, France, Netherlands]
+        CA: [Canada]
+        AU: [Australia]
+        ME: [United Arab Emirates, Saudi Arabia]
+      max_results_per_location: 25
+      min_expected_leads: 8
+      # Hand-exported CSVs are read from this directory (see .env
+      # APOLLO_CSV_IMPORT_DIR). Filenames are matched on niche id.
+      csv_import_glob: "b2b_saas_ops_*.csv"
+    icp:
+      description: >-
+        Post-seed B2B SaaS companies between 20 and 300 employees whose support
+        or onboarding load is growing faster than headcount. The buying signal
+        is hiring into support/CS while running a helpdesk with no AI
+        deflection layer.
+      must_have:
+        - identifiable decision-maker in a support, CS or operations role
+        - a public website or LinkedIn company page
+      good_signals:
+        - open Customer Success or Support roles posted in the last 60 days
+        - runs Intercom, Zendesk, HubSpot or Front without an AI layer
+        - recent funding round
+        - self-serve or onboarding push mentioned in a changelog or blog
+        - job posting mentions manual or repetitive process work
+      disqualifiers:
+        - already sells AI support automation (competitor)
+        - fewer than 10 employees
+        - enterprise with 1000+ employees
+      size_hint: 20-300 employees
+    tone: >-
+      Peer-to-peer operator voice. Specific and unhurried. Reference the actual
+      signal, never "I came across your company". No superlatives.
+
+# -----------------------------------------------------------------------------
+# Channels
+# -----------------------------------------------------------------------------
+channels:
+  enabled:
+    - email
+    - linkedin
+  # Used by N3.5 ONLY when both an email and a LinkedIn URL were found.
+  # email | linkedin | both
+  preference_when_both: both
+
+# -----------------------------------------------------------------------------
+# Sending identity. Appears in every draft and is checked by N5.5 against the
+# region's sender-identification requirement.
+# -----------------------------------------------------------------------------
+# EVERY VALUE HERE IS A TEMPLATE PLACEHOLDER. Fill them in through
+# your account details in the dashboard sidebar, or edit them here.
+#
+# The bracketed values and the example.invalid address are recognised as
+# "not set yet" by the dashboard, which is why it shows an empty profile and
+# prompts you to fill it in rather than displaying template text as though
+# somebody had typed it. Nothing should go out live until these are real:
+# N5.5 checks the sender identification against each region's rules.
+sending_identity:
+  from_name: "Arsalan Zubair"
+  from_email: arsalanzubair2001@gmail.com
+  reply_to: set-your-reply-address@example.invalid
+  # Use a SUBDOMAIN for cold outreach so a deliverability problem never
+  # contaminates your primary domain.
+  domain: example.invalid
+  company_name: "[your business name - set in Settings]"
+  # Required by the US and CA compliance profiles.
+  physical_address: "[your postal address - set in Settings]"
+  linkedin_account_label: "[your LinkedIn account - set in Settings]"
+  website: "[your website - set in Settings]"
+  # Appended to every email body by N4; N5.5 verifies it survived any edit.
+  signature_optout_line: >-
+    If this is not relevant, reply "unsubscribe" and I will not follow up.
+
+# -----------------------------------------------------------------------------
+# Qualification and routing thresholds
+# -----------------------------------------------------------------------------
+fit_score_threshold: 60          # below this, N3 routes the lead to archive
+hunter_top_n_per_batch: 5        # N2 spends Hunter lookups on this many leads
+max_leads_per_run: 40            # ceiling on leads pushed through one batch
+
+# -----------------------------------------------------------------------------
+# Sending limits. Enforced per tenant per provider by a durable daily counter.
+# Keep these WELL under the provider ceiling (Gmail ~500/day, Brevo ~300/day):
+# a new sending domain that jumps to 200/day gets filtered, not delivered.
+# -----------------------------------------------------------------------------
+daily_send_limits:
+  gmail_smtp: 40
+  brevo: 40
+  # Manual LinkedIn actions you are willing to do per day. N6b will not queue
+  # more than this, so the queue stays something a human can actually clear.
+  linkedin_manual: 15
+
+# -----------------------------------------------------------------------------
+# Business profile. Written by your account details in the dashboard sidebar.
+#
+# Captured, persisted and displayed today. Feeding these into N4's drafting
+# prompt is a follow-up backend task -- N4 currently drafts from the niche's
+# ICP description, the lead's signals and `tone` below.
+# -----------------------------------------------------------------------------
+business_profile:
+  what_you_sell: ""
+  who_you_serve: ""
+  problems_you_solve: ""
+  what_makes_you_different: ""
+  tone_of_voice: ""
+
+# -----------------------------------------------------------------------------
+# Standing instructions for Leo, written by the dashboard's Leo panel.
+#
+# Same status as the block above: stored and listed, not yet woven into the
+# drafting prompt. Each entry is {id, kind: always|never, text, created_at}.
+# -----------------------------------------------------------------------------
+agent_rules: []
+
+# -----------------------------------------------------------------------------
+# Voice and drafting rules handed to N4.
+# -----------------------------------------------------------------------------
+tone: >-
+  Plain, specific, peer-level. Lead with the observed signal. One idea per
+  message. No "I hope this email finds you well", no "quick question", no
+  fake urgency, no emoji. Short sentences. Sign off with a first name only.
+
+personalization:
+  # N4 re-prompts if the draft does not cite one of the lead's signals; after
+  # this many failures the lead is flagged for manual drafting.
+  max_self_check_attempts: 2
+  forbidden_phrases:
+    - "I hope this email finds you well"
+    - "quick question"
+    - "reaching out"
+    - "circle back"
+    - "synergy"
+    - "game-changer"
+    - "revolutionary"
+  email_max_words: 120
+  subject_max_chars: 60
+
+# -----------------------------------------------------------------------------
+# Compliance. Region profiles come from config/compliance_profiles.yaml; this
+# only names the profile set and adds tenant-level hard rules.
+# -----------------------------------------------------------------------------
+compliance:
+  profile_set: default             # -> the `regions:` block of that file
+  # Never contacted regardless of anything else.
+  # Add your OWN domain here so outreach can never loop back to your team.
+  blocked_domains:
+    - gmail.com
+    - outlook.com
+    - yahoo.com
+  # Extra suppression beyond the tenant's runtime suppression list.
+  blocked_emails: []
+  require_approval_before_send: true   # N5 human approval is mandatory
+
+# -----------------------------------------------------------------------------
+# CRM. One spreadsheet per tenant; the id lives in .env as
+# GOOGLE_SHEETS_SPREADSHEET_ID__example_tenant so no secret is committed here.
+# -----------------------------------------------------------------------------
+crm:
+  backend: google_sheets           # google_sheets | airtable
+  worksheet_name: Leads
+  suppression_worksheet_name: Suppression
+
+# -----------------------------------------------------------------------------
+# Optional cadence overrides. Same shape as config/cadences.yaml; anything
+# omitted falls back to the default cadence.
+# -----------------------------------------------------------------------------
+cadence_overrides:
+  email:
+    steps:
+      - step: 1
+        name: opener
+        wait_days: 0
+        max_words: 110
+      - step: 2
+        name: value_nudge
+        wait_days: 3          # this tenant runs a tighter gap than the default 4
+        max_words: 90
+      - step: 3
+        name: breakup
+        wait_days: 7
+        max_words: 60
+
+# -----------------------------------------------------------------------------
+# Providers -- who does each job.
+#
+# Every capability the pipeline needs is listed here with the provider that
+# serves it. Change a `primary` and the next batch uses a different service; no
+# code changes, no redeploy. Settings -> Connections writes this block, and
+# `GET /api/providers` lists what each capability accepts.
+#
+# The values below are the defaults the system has always used, written out
+# explicitly. Omitting the whole block, or any capability in it, is fine: the
+# resolver falls back to the older single-provider fields further down this
+# file (`runtime.llm_provider`, `crm.backend`, `sending_identity.provider`),
+# then to the matching .env variable, then to the registry's own default.
+#
+# `fallback` is used when the primary CANNOT RUN -- no key, no endpoint -- not
+# when it runs and finds nothing. The exception is `llm`, where the fallback
+# also catches a mid-batch failure, because moving to another model after a
+# rate-limit costs one retry rather than a whole lead.
+#
+# KEYS DO NOT GO IN THIS FILE. `settings.token` is rejected on write. Keys are
+# entered on the Connections screen, encrypted per workspace, and never
+# readable again -- see backend/secrets_store.py.
+# -----------------------------------------------------------------------------
+providers:
+
+  # Reads your requests, scores each business, writes the outreach.
+  llm:
+    primary: ollama
+
+  # Local businesses by area. Free, no key, rate limited to 1 search/second.
+  discovery_local:
+    primary: osm
+
+  # People by job title at companies. `csv_import` reads exports you drop in
+  # the folder named by APOLLO_CSV_IMPORT_DIR and calls no API at all.
+  discovery_b2b:
+    primary: apollo
+
+  # Turning a company into a named person. `website_only` spends no lookups
+  # and relies on what the business publishes itself.
+  enrichment:
+    primary: hunter
+
+  # Sending. Nothing is sent in Test Mode regardless of what is here.
+  email_sender:
+    primary: gmail_smtp
+
+  # Watching for replies, so a reply stops the follow-ups. Leave the IMAP
+  # fields blank on the Connections screen to reuse the Gmail login.
+  email_reader:
+    primary: imap
+
+  # Where the outcome is written. `csv` needs no account.
+  crm:
+    primary: google_sheets
+
+  # Localisation. The model behind DeepL is the historical order and is
+  # applied even when no fallback is named here.
+  translation:
+    primary: deepl
+    fallback: llm
+
+# -----------------------------------------------------------------------------
+# Operational
+# -----------------------------------------------------------------------------
+runtime:
+  llm_provider: groq               # groq | gemini | ollama | mock
+  # Dry runs auto-approve at N5 so the full graph can be exercised end-to-end
+  # without a human sitting at the terminal. NEVER set this true for a live run.
+  auto_approve_in_dry_run: true
+  low_yield_threshold_ratio: 0.5   # actual/expected below this tags low_yield
+  reply_lookback_days: 14

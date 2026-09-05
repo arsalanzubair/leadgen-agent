@@ -1,0 +1,201 @@
+# =============================================================================
+# Scheduled lead generation run.
+#
+# INSTALL: copy this file to .github/workflows/leadgen.yml in your repository.
+# GitHub only reads workflows from that directory, so it does nothing here.
+#
+# WHAT IT DOES
+#   Runs one tenant batch on a schedule, in DRY-RUN MODE BY DEFAULT. Going live
+#   is an explicit choice you make by setting the LEADGEN_LIVE repository
+#   variable to "true" -- a scheduled job that starts emailing strangers
+#   because a default flipped is not a failure mode worth risking.
+#
+# WHAT IT DOES NOT DO
+#   It does not approve drafts. N5 interrupts and the thread waits in the
+#   checkpoint database; you approve from your own machine with
+#   `python -m src.cli.approve`. It also cannot send LinkedIn messages -- those
+#   are queued for you to send by hand, by design.
+#
+# THE CHECKPOINT PROBLEM
+#   GitHub Actions runners are ephemeral, so the per-tenant SQLite checkpoint
+#   database would vanish between runs and every lead would start over. The
+#   cache steps below persist .data/ across runs. A cache is best-effort
+#   storage, not a database: if you are running this for real clients, run the
+#   schedule on a small always-on box (see scheduler/run_cron_example.sh) and
+#   use this workflow for dry-run regression checks instead.
+# =============================================================================
+
+name: leadgen batch
+
+on:
+  schedule:
+    # 09:15 UTC on weekdays. Deliberately not on the hour -- every cron on
+    # GitHub fires at :00 and the queue backs up.
+    - cron: "15 9 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: "tenant_id to run"
+        required: true
+        default: "example_tenant"
+      dry_run:
+        description: "dry run (never sends)"
+        type: boolean
+        default: true
+      limit:
+        description: "cap leads this run (0 = tenant config default)"
+        required: false
+        default: "0"
+
+# One run at a time per tenant: two concurrent batches would double-send and
+# race on the checkpoint database.
+concurrency:
+  group: leadgen-${{ inputs.tenant || vars.LEADGEN_DEFAULT_TENANT || 'example_tenant' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TENANT: ${{ inputs.tenant || vars.LEADGEN_DEFAULT_TENANT || 'example_tenant' }}
+      LEAD_LIMIT: ${{ inputs.limit || '0' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Playwright browsers are only needed for JS-rendered sites during
+      # enrichment. Skipped on a dry run, which uses fixtures.
+      - name: Install Playwright Chromium
+        if: ${{ inputs.dry_run == false }}
+        run: playwright install --with-deps chromium
+
+      # ---- persist per-tenant state across ephemeral runners --------------
+      - name: Restore leadgen state
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .data
+          key: leadgen-data-${{ env.TENANT }}-${{ github.run_id }}
+          restore-keys: |
+            leadgen-data-${{ env.TENANT }}-
+
+      - name: Write .env
+        env:
+          # Add a repository secret for each service you have actually signed
+          # up for. Every one of these is optional: a missing key degrades that
+          # integration (mock LLM, OSM instead of Places, CSV instead of
+          # Sheets) rather than failing the run.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          IMAP_USERNAME: ${{ secrets.IMAP_USERNAME }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
+          LIVE: ${{ vars.LEADGEN_LIVE }}
+        run: |
+          mkdir -p .secrets
+          if [ -n "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" > .secrets/google_service_account.json
+          fi
+
+          # GLOBAL_DRY_RUN is the kill switch: it stays true unless the
+          # LEADGEN_LIVE repository variable is explicitly "true".
+          if [ "$LIVE" = "true" ]; then GLOBAL="false"; else GLOBAL="true"; fi
+
+          cat > .env <<ENVEOF
+          LEADGEN_TENANTS=${TENANT}
+          GLOBAL_DRY_RUN=${GLOBAL}
+          LOG_LEVEL=INFO
+
+          LLM_PROVIDER=groq
+          GROQ_API_KEY=${GROQ_API_KEY}
+          GOOGLE_API_KEY=${GOOGLE_API_KEY}
+
+          GOOGLE_PLACES_API_KEY=${GOOGLE_PLACES_API_KEY}
+          NOMINATIM_USER_AGENT=leadgen-agent/0.1 (github-actions)
+          APOLLO_API_KEY=${APOLLO_API_KEY}
+          HUNTER_API_KEY=${HUNTER_API_KEY}
+          DEEPL_API_KEY=${DEEPL_API_KEY}
+
+          EMAIL_PROVIDER=gmail_smtp
+          GMAIL_ADDRESS=${GMAIL_ADDRESS}
+          GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+          BREVO_API_KEY=${BREVO_API_KEY}
+
+          EMAIL_READER=imap
+          IMAP_USERNAME=${IMAP_USERNAME}
+          IMAP_PASSWORD=${IMAP_PASSWORD}
+
+          CRM_BACKEND=google_sheets
+          GOOGLE_SERVICE_ACCOUNT_FILE=./.secrets/google_service_account.json
+          GOOGLE_SHEETS_SPREADSHEET_ID__${TENANT}=${SHEET_ID}
+
+          LANGSMITH_TRACING=true
+          LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+          LANGSMITH_PROJECT=leadgen-agent
+          ENVEOF
+
+          echo "GLOBAL_DRY_RUN=${GLOBAL}"
+
+      # A red suite means a broken batch. Run it before touching a real tenant.
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Run the batch
+        run: |
+          ARGS="--tenant ${TENANT}"
+          if [ "${{ inputs.dry_run }}" != "false" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${LEAD_LIMIT}" != "0" ]; then ARGS="$ARGS --limit ${LEAD_LIMIT}"; fi
+          echo "python -m src.cli.run_batch $ARGS"
+          python -m src.cli.run_batch $ARGS
+
+      - name: Show the pending approval queue
+        if: always()
+        run: python -m src.cli.approve --tenant "${TENANT}" --list || true
+
+      - name: Show the manual LinkedIn queue
+        if: always()
+        run: python -m src.cli.linkedin_queue --tenant "${TENANT}" list || true
+
+      - name: Save leadgen state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .data
+          key: leadgen-data-${{ env.TENANT }}-${{ github.run_id }}
+
+      # The CRM CSV is the dry-run artefact worth keeping; .env and .secrets
+      # are deliberately NOT uploaded.
+      - name: Upload run output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leadgen-${{ env.TENANT }}-${{ github.run_id }}
+          path: |
+            .data/dry_run/*.csv
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,197 @@
+{
+  "_comment": "Dry-run corpus for `python -m src.cli.run_batch --dry-run`. Stands in for live N1 discovery and (where signals/contact are pre-filled) for N2 enrichment, so the whole graph can be exercised offline with no API keys. Covers every region, both niche families, and the awkward cases each node has to handle.",
+  "tenant_id": "example_tenant",
+  "leads": [
+    {
+      "niche_id": "local_dental",
+      "region": "UK",
+      "language": "en",
+      "company_name": "Bright Smile Dental Practice",
+      "website": "https://brightsmile-dental.co.uk",
+      "linkedin_url": "",
+      "location": "Manchester, United Kingdom",
+      "industry": "Dental clinic",
+      "contact_email": "hello@brightsmile-dental.co.uk",
+      "contact_name": "Priya Raman",
+      "signals": [
+        "no online booking - phone number only on the contact page",
+        "Google listing shows 34 reviews with no owner responses since 2024",
+        "site is not mobile responsive below 480px"
+      ],
+      "source": "fixture",
+      "_expect": "email-only (no linkedin_url) -> N3.5 must choose 'email' despite any niche default"
+    },
+    {
+      "niche_id": "local_dental",
+      "region": "US",
+      "language": "en",
+      "company_name": "Lakeside Family Dentistry",
+      "website": "https://lakesidefamilydentistry.com",
+      "linkedin_url": "https://www.linkedin.com/company/lakeside-family-dentistry",
+      "location": "Austin, Texas, United States",
+      "industry": "Dental clinic",
+      "contact_email": "frontdesk@lakesidefamilydentistry.com",
+      "contact_name": "Dana Whitfield",
+      "signals": [
+        "booking widget 404s on mobile Safari",
+        "no live chat or after-hours capture",
+        "hiring a full-time treatment coordinator on Indeed"
+      ],
+      "source": "fixture",
+      "_expect": "both channels available -> N3.5 falls through to the tenant preference"
+    },
+    {
+      "niche_id": "local_salon",
+      "region": "AU",
+      "language": "en",
+      "company_name": "Ivy & Oak Hair Studio",
+      "website": "https://ivyandoakhair.com.au",
+      "linkedin_url": "",
+      "location": "Fitzroy, Melbourne, Australia",
+      "industry": "Hair salon",
+      "contact_email": "",
+      "contact_name": "",
+      "signals": [
+        "Instagram bio links to a Linktree, not a booking system",
+        "posts 4x per week but no lead capture anywhere"
+      ],
+      "source": "fixture",
+      "_expect": "no email and no linkedin_url -> N2 marks unreachable=True and every downstream node skips it"
+    },
+    {
+      "niche_id": "local_gym",
+      "region": "ME",
+      "language": "ar",
+      "company_name": "Peak Performance Fitness DMCC",
+      "website": "https://peakperformance.ae",
+      "linkedin_url": "https://www.linkedin.com/company/peak-performance-dmcc",
+      "location": "Dubai, United Arab Emirates",
+      "industry": "Gym and fitness studio",
+      "contact_email": "info@peakperformance.ae",
+      "contact_name": "Omar Al-Fahim",
+      "signals": [
+        "class timetable is a static PDF updated in January",
+        "no Arabic version of the site despite an Arabic-language ad campaign",
+        "trial signup form emails a shared inbox with no autoresponder"
+      ],
+      "source": "fixture",
+      "_expect": "language_map gives 'ar' -> N4 must localise the draft via translation.py"
+    },
+    {
+      "niche_id": "b2b_saas_ops",
+      "region": "EU",
+      "language": "de",
+      "company_name": "Nordwind Logistics Software GmbH",
+      "website": "https://nordwind-logistics.de",
+      "linkedin_url": "https://www.linkedin.com/company/nordwind-logistics",
+      "location": "Hamburg, Germany",
+      "industry": "Logistics SaaS",
+      "contact_email": "",
+      "contact_name": "Katrin Vogel",
+      "signals": [
+        "three open Customer Success roles posted in the last 30 days",
+        "runs Intercom and HubSpot but no AI deflection layer",
+        "changelog shows a self-serve onboarding push in Q1"
+      ],
+      "source": "fixture",
+      "_expect": "LinkedIn-only + EU region -> N3.5 chooses 'linkedin'; N5.5 applies the strictest compliance profile"
+    },
+    {
+      "niche_id": "b2b_saas_ops",
+      "region": "CA",
+      "language": "en",
+      "company_name": "Maple Route Analytics",
+      "website": "https://maplerouteanalytics.ca",
+      "linkedin_url": "https://www.linkedin.com/company/maple-route-analytics",
+      "location": "Toronto, Ontario, Canada",
+      "industry": "Analytics SaaS",
+      "contact_email": "kmoreau@maplerouteanalytics.ca",
+      "contact_name": "Kieran Moreau",
+      "signals": [
+        "job posting for a Sales Development Rep mentions manual list building",
+        "uses Segment and Metabase per their engineering blog",
+        "raised a seed round in November per their press page"
+      ],
+      "source": "fixture",
+      "_expect": "CASL region - N5.5 must confirm the required identification and opt-out line before any send"
+    },
+    {
+      "niche_id": "b2b_saas_ops",
+      "region": "US",
+      "language": "en",
+      "company_name": "Grantly Compliance Cloud",
+      "website": "https://grantly.io",
+      "linkedin_url": "https://www.linkedin.com/company/grantly-compliance",
+      "location": "Denver, Colorado, United States",
+      "industry": "RegTech SaaS",
+      "contact_email": "info@grantly.io",
+      "contact_name": "",
+      "signals": [],
+      "source": "fixture",
+      "_expect": "empty signals + role-based address -> N4 self-check must fail twice and flag for manual drafting rather than sending generic copy"
+    },
+    {
+      "niche_id": "local_dental",
+      "region": "UK",
+      "language": "en",
+      "company_name": "Bright Smile Dental",
+      "website": "http://www.brightsmile-dental.co.uk/contact",
+      "linkedin_url": "",
+      "location": "Manchester UK",
+      "industry": "Dental clinic",
+      "contact_email": "hello@brightsmile-dental.co.uk",
+      "contact_name": "Priya Raman",
+      "signals": [],
+      "source": "fixture",
+      "_expect": "deliberate near-duplicate of lead 1 (same domain, different casing/path/name) -> N1 dedupe must collapse it to the same lead_id"
+    },
+    {
+      "niche_id": "local_salon",
+      "region": "EU",
+      "language": "fr",
+      "company_name": "Atelier Coiffure Saint-Germain",
+      "website": "https://ateliercoiffure-saintgermain.fr",
+      "linkedin_url": "https://www.linkedin.com/company/atelier-coiffure-saint-germain",
+      "location": "Paris 6e, France",
+      "industry": "Hair salon",
+      "contact_email": "contact@ateliercoiffure-saintgermain.fr",
+      "contact_name": "Camille Berthier",
+      "signals": [
+        "reservation page is a mailto link with no calendar or availability",
+        "Google Business profile lists 212 reviews but no replies since 2025",
+        "site is French-only while their Instagram captions target English-speaking expats"
+      ],
+      "source": "fixture",
+      "_expect": "EU + language_map gives 'fr' -> N4 must localise both the email and the LinkedIn note into French via translation.py, and N5.5 must still find the French opt-out line required by the EU compliance profile"
+    }
+  ],
+  "suppressed_examples": [
+    {
+      "contact_email": "frontdesk@lakesidefamilydentistry.com",
+      "reason": "manual opt-out request, logged 2026-02-11",
+      "_expect": "N5.5 must return blocked_optout for lead 2 on EVERY run and EVERY touch"
+    }
+  ],
+  "reply_examples": [
+    {
+      "lead_id_hint": "Maple Route Analytics",
+      "reply_text": "Thanks for reaching out - this is timely. Can you do a 20 minute call Thursday?",
+      "_expect": "interested -> exits the cadence immediately, next_action becomes a same-day manual follow-up"
+    },
+    {
+      "lead_id_hint": "Grantly Compliance Cloud",
+      "reply_text": "Please remove me from your list and do not contact this address again.",
+      "_expect": "not_interested + explicit opt-out language -> auto-added to the suppression list without operator action"
+    },
+    {
+      "lead_id_hint": "Bright Smile Dental Practice",
+      "reply_text": "I am currently out of the office until 14 March with limited access to email. For urgent matters contact reception.",
+      "_expect": "out_of_office -> excluded by the autoreply detector BEFORE classification; must not count as a real reply"
+    },
+    {
+      "lead_id_hint": "Nordwind Logistics Software GmbH",
+      "reply_text": "Wie sind Sie an meine Daten gekommen? Bitte nennen Sie mir Ihre Rechtsgrundlage nach DSGVO.",
+      "_expect": "objection with a compliance challenge -> suppress and route to manual handling"
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+# =============================================================================
+# compliance_profiles.yaml -- machine-checkable outreach rules, one per region.
+#
+# THIS IS NOT LEGAL ADVICE and it is deliberately not written as prose. Every
+# field here is a flag or a number that N5.5 (suppression + compliance gate)
+# can actually evaluate against a draft before a send. If a rule cannot be
+# expressed as something a function can check, it does not belong in this file
+# -- put it in the tenant's operating notes instead.
+#
+# Have a lawyer review your actual programme for the regions you operate in.
+# =============================================================================
+
+version: 1
+
+# Applied to every region unless the region overrides it.
+defaults:
+  requires_optout_line: true
+  requires_physical_address: false
+  requires_sender_identification: true
+  prefers_role_based_address: false
+  allows_personal_address: true
+  requires_prior_consent: false
+  optout_must_be_one_click: false
+  max_touches_without_reply: 4
+  # A send is blocked if the draft body does not contain at least one of these
+  # (case-insensitive substring match). Language-specific variants are listed
+  # so a localised draft still passes -- see N4 + translation.py.
+  optout_phrases:
+    - unsubscribe
+    - opt out
+    - opt-out
+    - "reply stop"
+    - "let me know and I will not follow up"
+    - "no longer wish to hear"
+  # Substrings that identify the sender well enough to satisfy an
+  # identification requirement. The tenant's from-name and company name are
+  # appended to this list at check time by N5.5.
+  identification_phrases: []
+
+regions:
+
+  # ---------------------------------------------------------------------------
+  # United States -- CAN-SPAM. Opt-out plus a valid physical postal address are
+  # the two hard mechanical requirements. Cold B2B email is permitted.
+  # ---------------------------------------------------------------------------
+  US:
+    label: United States (CAN-SPAM)
+    requires_optout_line: true
+    requires_physical_address: true
+    requires_sender_identification: true
+    prefers_role_based_address: false
+    allows_personal_address: true
+    requires_prior_consent: false
+    optout_must_be_one_click: false
+    max_touches_without_reply: 4
+    honour_optout_within_days: 10
+    business_hours:
+      timezone: America/New_York
+      start_hour: 8
+      end_hour: 17
+      weekdays: [0, 1, 2, 3, 4]   # Mon-Fri, Python weekday() numbering
+    notes_for_operator: >-
+      Subject line must not be deceptive. Honour an opt-out within 10 business
+      days. A PO box is acceptable as the physical address.
+
+  # ---------------------------------------------------------------------------
+  # United Kingdom -- PECR + UK GDPR. Corporate subscribers (Ltd, PLC, LLP) may
+  # be emailed on a legitimate-interest basis; sole traders and partnerships are
+  # treated as individuals and need consent. Role-based addresses are the safer
+  # target, so we prefer but do not require them.
+  # ---------------------------------------------------------------------------
+  UK:
+    label: United Kingdom (PECR / UK GDPR)
+    requires_optout_line: true
+    requires_physical_address: false
+    requires_sender_identification: true
+    prefers_role_based_address: true
+    allows_personal_address: true
+    requires_prior_consent: false
+    optout_must_be_one_click: false
+    max_touches_without_reply: 3
+    honour_optout_within_days: 3
+    business_hours:
+      timezone: Europe/London
+      start_hour: 9
+      end_hour: 17
+      weekdays: [0, 1, 2, 3, 4]
+    notes_for_operator: >-
+      Corporate subscribers only. Do not email sole traders or partnerships
+      without consent. Identify the sending organisation in the body.
+
+  # ---------------------------------------------------------------------------
+  # European Union -- GDPR + ePrivacy. The strictest profile in this file.
+  # Personal addresses (firstname.lastname@) are disallowed outright; only
+  # role-based addresses are targeted, and a legal-basis line is required.
+  # ---------------------------------------------------------------------------
+  EU:
+    label: European Union (GDPR / ePrivacy)
+    requires_optout_line: true
+    requires_physical_address: false
+    requires_sender_identification: true
+    prefers_role_based_address: true
+    require_role_based_address: true     # hard requirement, not a preference
+    allows_personal_address: false
+    requires_prior_consent: false
+    requires_legal_basis_line: true
+    optout_must_be_one_click: true
+    max_touches_without_reply: 2
+    honour_optout_within_days: 1
+    business_hours:
+      timezone: Europe/Berlin
+      start_hour: 9
+      end_hour: 17
+      weekdays: [0, 1, 2, 3, 4]
+    # Multilingual, because EU drafts are localised (de, fr, nl, es, it).
+    optout_phrases:
+      - unsubscribe
+      - opt out
+      - opt-out
+      - abmelden
+      - keine weiteren
+      - "se désabonner"
+      - "desabonner"
+      # Substring, not a full phrase: it matches "ne plus recevoir" and
+      # "ne souhaitez plus recevoir" alike. Matching only the exact form was
+      # blocking otherwise-compliant French drafts.
+      - "plus recevoir"
+      - "no recibir"
+      - "cancella iscrizione"
+      - uitschrijven
+    legal_basis_phrases:
+      - legitimate interest
+      - "berechtigtes interesse"
+      - "intérêt légitime"
+      - "interet legitime"
+      - gdpr
+      - dsgvo
+      - rgpd
+    notes_for_operator: >-
+      Role-based addresses only. State the legal basis and how to object in the
+      first message. Honour objections immediately, not within N days.
+
+  # ---------------------------------------------------------------------------
+  # Canada -- CASL. Consent-based; the implied-consent route (published
+  # business address relevant to the recipient's role) is what a cold programme
+  # relies on, and it requires full sender identification plus a working
+  # unsubscribe in every message.
+  # ---------------------------------------------------------------------------
+  CA:
+    label: Canada (CASL)
+    requires_optout_line: true
+    requires_physical_address: true
+    requires_sender_identification: true
+    prefers_role_based_address: true
+    allows_personal_address: true
+    requires_prior_consent: false
+    requires_implied_consent_basis: true
+    optout_must_be_one_click: false
+    max_touches_without_reply: 3
+    honour_optout_within_days: 10
+    business_hours:
+      timezone: America/Toronto
+      start_hour: 9
+      end_hour: 17
+      weekdays: [0, 1, 2, 3, 4]
+    optout_phrases:
+      - unsubscribe
+      - opt out
+      - opt-out
+      - "se désabonner"
+      - "desabonner"
+      - "plus recevoir"
+      - "reply stop"
+    notes_for_operator: >-
+      Rely on implied consent from a conspicuously published business address
+      relevant to the recipient's role. Implied consent from a published
+      address expires; do not re-run an old list. Sender name, mailing address
+      and unsubscribe are mandatory in every message.
+
+  # ---------------------------------------------------------------------------
+  # Australia -- Spam Act 2003. Consent, identification and a functional
+  # unsubscribe. Inferred consent covers a published work address where the
+  # message relates to the person's role.
+  # ---------------------------------------------------------------------------
+  AU:
+    label: Australia (Spam Act 2003)
+    requires_optout_line: true
+    requires_physical_address: false
+    requires_sender_identification: true
+    prefers_role_based_address: true
+    allows_personal_address: true
+    requires_prior_consent: false
+    optout_must_be_one_click: false
+    max_touches_without_reply: 3
+    honour_optout_within_days: 5
+    business_hours:
+      timezone: Australia/Sydney
+      start_hour: 9
+      end_hour: 17
+      weekdays: [0, 1, 2, 3, 4]
+    notes_for_operator: >-
+      Unsubscribe must stay functional for at least 30 days after sending.
+      Identify the sender and how to contact them.
+
+  # ---------------------------------------------------------------------------
+  # Middle East (UAE / Saudi) -- UAE PDPL and Saudi PDPL. Both are
+  # consent-leaning, so this profile is conservative: role-based addresses only,
+  # a low touch ceiling, and a working-week that runs Sunday to Thursday.
+  # ---------------------------------------------------------------------------
+  ME:
+    label: Middle East - UAE / Saudi Arabia (PDPL)
+    requires_optout_line: true
+    requires_physical_address: false
+    requires_sender_identification: true
+    prefers_role_based_address: true
+    require_role_based_address: true
+    allows_personal_address: false
+    requires_prior_consent: false
+    optout_must_be_one_click: false
+    max_touches_without_reply: 2
+    honour_optout_within_days: 3
+    business_hours:
+      timezone: Asia/Dubai
+      start_hour: 9
+      end_hour: 17
+      weekdays: [6, 0, 1, 2, 3]   # Sun-Thu (Python: Sun=6, Mon=0 .. Thu=3)
+    optout_phrases:
+      - unsubscribe
+      - opt out
+      - opt-out
+      - "إلغاء الاشتراك"
+      - "لا ترغب"
+    notes_for_operator: >-
+      Working week is Sunday to Thursday; Friday and Saturday are the weekend
+      in this profile. Avoid sending during Ramadan business-hour shifts --
+      adjust start_hour/end_hour for that period manually. Role-based
+      addresses only.

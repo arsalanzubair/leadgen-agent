@@ -1,0 +1,171 @@
+# =============================================================================
+# cadences.yaml -- default multi-touch sequences, read by N8.
+#
+# A cadence is an ordered list of steps. N8 advances `sequence_step`, computes
+# `next_action`, and either loops back to N4 for the next touch or archives the
+# lead once the list runs out with no reply.
+#
+# `wait_days` is the gap AFTER that step before the next one becomes due.
+# `requires` gates a step on an external condition the operator confirms
+# (LinkedIn acceptance), so the sequence pauses rather than firing blindly.
+#
+# Any tenant may override a whole cadence in its own YAML under
+# `cadence_overrides:` using the same shape.
+#
+# NOTE: a region's compliance profile caps total touches via
+# `max_touches_without_reply`. N8 takes the MINIMUM of that cap and the cadence
+# length, so an EU lead on a 3-touch email cadence still stops after 2.
+# =============================================================================
+
+version: 1
+
+# An `interested` reply always exits the sequence immediately, regardless of
+# where it lands in the cadence (Section 4, N8). These are the fallbacks for
+# every other terminal state.
+on_reply:
+  interested:
+    exit_sequence: true
+    next_action: "MANUAL: same-day personal follow-up - reply from the sending inbox, do not send another sequenced touch"
+  not_interested:
+    exit_sequence: true
+    suppress: true
+    next_action: "closed - added to suppression list"
+  objection:
+    exit_sequence: true
+    next_action: "MANUAL: review objection and decide whether to respond personally"
+  out_of_office:
+    exit_sequence: false
+    # An OOO is not a reply. Push the next touch out rather than burning one.
+    defer_days: 7
+    next_action: "out of office detected - next touch deferred 7 days"
+  no_reply:
+    exit_sequence: false
+
+cadences:
+
+  # ---------------------------------------------------------------------------
+  # Email: 3 touches. Gaps widen so the sequence does not feel mechanical.
+  # ---------------------------------------------------------------------------
+  email:
+    label: Standard 3-touch email
+    channel: email
+    steps:
+      - step: 1
+        name: opener
+        wait_days: 0
+        intent: >-
+          Open with the specific signal found during enrichment. One
+          observation, one relevant outcome, one low-friction question. No
+          pitch deck, no feature list.
+        max_words: 120
+      - step: 2
+        name: value_nudge
+        wait_days: 4
+        intent: >-
+          Reference the same signal from a different angle and add one concrete
+          proof point (a comparable result, a short specific example). Do not
+          repeat the opener's wording.
+        max_words: 90
+      - step: 3
+        name: breakup
+        wait_days: 7
+        intent: >-
+          Short, warm close-out. Explicitly say this is the last message and
+          leave the door open. No guilt, no false urgency.
+        max_words: 60
+    archive_after_final_step: true
+    archive_reason: cadence_exhausted
+
+  # ---------------------------------------------------------------------------
+  # LinkedIn: connect -> await acceptance -> DM -> wait -> follow-up DM.
+  # EVERY step here is human-sent. N6b queues it; a person sends it.
+  # ---------------------------------------------------------------------------
+  linkedin:
+    label: Connect then two DMs
+    channel: linkedin
+    steps:
+      - step: 1
+        name: connection_request
+        wait_days: 0
+        intent: >-
+          Connection note referencing the specific signal. Warm, specific, no
+          ask. Hard limit 300 characters.
+        max_chars: 300
+        manual_send: true
+      - step: 2
+        name: post_acceptance_dm
+        wait_days: 2
+        requires: connection_accepted
+        intent: >-
+          Thank them briefly, restate the signal in one line, ask one question
+          worth answering. No link in the first DM.
+        max_words: 90
+        manual_send: true
+        # If the connection is never accepted, stop here rather than waiting
+        # forever in the queue.
+        abandon_if_unmet_after_days: 21
+      - step: 3
+        name: followup_dm
+        wait_days: 6
+        requires: connection_accepted
+        intent: >-
+          One useful thing (a relevant example or observation) and a clear,
+          easy out. Last message.
+        max_words: 70
+        manual_send: true
+    archive_after_final_step: true
+    archive_reason: cadence_exhausted
+
+  # ---------------------------------------------------------------------------
+  # Both: email leads, LinkedIn reinforces. Used when N3.5 resolves to 'both'.
+  # The two tracks advance on one shared sequence_step so a lead cannot receive
+  # five touches by accident.
+  # ---------------------------------------------------------------------------
+  both:
+    label: Email-led with LinkedIn reinforcement
+    channel: both
+    steps:
+      - step: 1
+        name: email_opener
+        channel: email
+        wait_days: 0
+        intent: >-
+          Same as the standard email opener. Lead with the signal.
+        max_words: 120
+      - step: 2
+        name: linkedin_connect
+        channel: linkedin
+        wait_days: 2
+        intent: >-
+          Connection note that does NOT mention the email. Reference the signal
+          independently, as if this were the first contact.
+        max_chars: 300
+        manual_send: true
+      - step: 3
+        name: email_value_nudge
+        channel: email
+        wait_days: 5
+        intent: >-
+          Add one proof point. Still no pitch.
+        max_words: 90
+      - step: 4
+        name: email_breakup
+        channel: email
+        wait_days: 7
+        intent: >-
+          Short close-out, explicitly the last message.
+        max_words: 60
+    archive_after_final_step: true
+    archive_reason: cadence_exhausted
+
+# Sending-window rules applied on top of the per-region business hours in
+# compliance_profiles.yaml. N6a will not send outside these.
+sending_windows:
+  # Skip the first and last hour of the working day -- inbox noise is worst then.
+  avoid_first_hour: true
+  avoid_last_hour: true
+  # Never send on these days regardless of region weekday config.
+  skip_dates: []
+  # If a touch becomes due outside the window, hold it until the next open
+  # window rather than dropping it.
+  defer_out_of_hours: true

@@ -1,0 +1,63 @@
+# leadgen-agent -- all free / free-tier. No paid service appears here.
+# Python 3.11+ (3.12 recommended: widest wheel coverage for lxml/playwright).
+#
+# Lower bounds only, so a fresh install picks up fixes; pin exactly with
+# `pip freeze > requirements.lock.txt` once your stack is known-good.
+
+# ---- Orchestration -------------------------------------------------------- #
+langgraph>=0.2.60
+langgraph-checkpoint-sqlite>=2.0.0        # SqliteSaver, one DB per tenant
+langchain>=0.3.10
+langchain-core>=0.3.25
+langchain-community>=0.3.10
+
+# ---- LLM providers (free tiers + local fallback) -------------------------- #
+langchain-groq>=0.2.1                     # primary
+langchain-google-genai>=2.0.5             # Gemini Flash alternate
+langchain-ollama>=0.2.1                   # local fallback, no key needed
+
+# ---- Observability -------------------------------------------------------- #
+langsmith>=0.1.140                        # free tier tracing
+
+# ---- Config / data -------------------------------------------------------- #
+pydantic>=2.9.0                           # LLM structured output parsing only
+PyYAML>=6.0.2
+python-dotenv>=1.0.1
+python-dateutil>=2.9.0
+tzdata>=2024.2                            # REQUIRED on Windows for zoneinfo
+
+# ---- Discovery / scraping / enrichment ------------------------------------ #
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+lxml>=5.3.0                               # fast parser backend for bs4
+playwright>=1.49.0                        # JS-rendered sites; see README step 1
+
+# ---- Translation ---------------------------------------------------------- #
+deepl>=1.19.1                             # free tier, 500k chars/month
+
+# ---- CRM backends --------------------------------------------------------- #
+gspread>=6.1.4                            # Google Sheets (primary)
+google-auth>=2.36.0
+google-auth-oauthlib>=1.2.1               # Gmail API OAuth flow (N7)
+google-api-python-client>=2.154.0         # Gmail API (N7)
+pyairtable>=3.0.0                         # Airtable free plan (alternate)
+
+# ---- Reliability ---------------------------------------------------------- #
+tenacity>=9.0.0                           # retry-once wrappers (Section 8)
+
+# ---- CLI ------------------------------------------------------------------ #
+typer>=0.15.1
+rich>=13.9.4                              # approval + LinkedIn queue rendering
+
+# ---- Optional local dashboard (Looker Studio is the primary target) ------- #
+streamlit>=1.41.0
+
+# ---- Tests ---------------------------------------------------------------- #
+pytest>=8.3.4
+pytest-mock>=3.14.0
+freezegun>=1.5.1                          # cadence / quota-reset clock control
+responses>=0.25.3                         # mock requests-based integrations
+
+# Note: email SENDING (Gmail SMTP) and IMAP reply polling use the stdlib
+# (smtplib, imaplib, email) -- no dependency needed. Brevo is called over its
+# REST API with `requests` rather than its heavy vendor SDK.

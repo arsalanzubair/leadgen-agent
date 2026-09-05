@@ -1,0 +1,128 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------------
+   Design tokens. These are the only colour definitions in the product; every
+   Tailwind colour class resolves to one of them.
+
+   Light, whitespace-driven, one teal accent. The neutrals are Tailwind's stock
+   slate scale rather than one-off hex values, so a border and a muted label
+   are provably the same greys used everywhere else.
+
+   Deliberately absent: dark surfaces, heatmap cells, thick coloured dividers,
+   tabular numerals, any second accent. Emphasis comes from weight, size and
+   space -- the teal is spent on exactly one primary action per screen.
+   -------------------------------------------------------------------------- */
+:root {
+  /* Neutrals -- Tailwind slate */
+  --bg: #ffffff; /* sidebar, cards, the Home screen */
+  --bg-page: #f8fafc; /* slate-50 -- the base under Leads/Email/LinkedIn */
+  --surface: #ffffff;
+  /* A card sitting on the page needs no second tone; "raised" is the hover and
+     fill grey, which is the page colour lifted onto a white card. */
+  --surface-raised: #f8fafc;
+  --surface-sunken: #f1f5f9;
+
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  /* Accent -- one custom teal, and nothing else competes with it. */
+  --accent: #20808d;
+  --accent-hover: #1a6b76;
+  --accent-active: #155760;
+  --accent-light-bg: #f0fdfa; /* icon badge fill */
+  --accent-soft-bg: #e6f5f6; /* empty-state badge fill */
+  --accent-logo-lt: #39c8c2; /* the logo mark's gradient highlight, only */
+  /* Text on top of a filled accent surface. The teal is dark enough that white
+     clears 4.5:1 comfortably. */
+  --accent-contrast: #ffffff;
+
+  /* Status. Muted enough to sit inside a light card without shouting. */
+  --success: #15803d;
+  --success-muted: #f0fdf4;
+  --warning: #b45309;
+  --warning-muted: #fffbeb;
+  --danger: #b91c1c;
+  --danger-muted: #fef2f2;
+
+  color-scheme: light;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+  `.num` is intentionally empty.
+
+  Every number used to go through it for tabular monospace figures. This design
+  has no monospace anywhere and no tabular numerals, so the class stays as a
+  seam -- the `<Num>` component and its call sites are unchanged -- and renders
+  numbers in the same face as the prose around them.
+*/
+.num {
+  font-variant-numeric: normal;
+}
+
+/* --- focus ---------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- scrollbars ----------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: content-box;
+}
+
+/* --- selection ------------------------------------------------------------ */
+::selection {
+  background: var(--accent-soft-bg);
+  color: var(--text-primary);
+}
