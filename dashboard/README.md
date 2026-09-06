@@ -10,7 +10,10 @@ machinery is called.
 
 ```bash
 # the settings service, from the project root — see backend/README.md
-python -m uvicorn backend.main:app --port 8000 --reload
+python -m backend.main
+# listens on BACKEND_HOST:BACKEND_PORT (default 127.0.0.1:8000); set
+# BACKEND_PORT in .env or the environment to move it, and the dashboard's
+# dev proxy follows automatically. BACKEND_RELOAD=true for auto-restart.
 
 # the dashboard, in a second terminal
 npm install
@@ -149,16 +152,17 @@ click; choosing Live Mode is two, and the second spells out what it means.
 person did. The screen says so outright rather than leaving the user to infer
 it, and an interaction test asserts a bare `Send` button does not exist.
 
-**Nothing runs before the user has seen what was understood.** Find Leads has
-three states — compose, review, running — and review cannot be skipped.
-Somebody who has just typed a sentence about their own business has to see it
-read back correctly before they will trust anything after it.
+**Nothing is sent before the user has read it.** The gate is approval, and it
+happens on the row: the message is shown in full with Approve, Edit and Reject
+beside it. The plan-confirmation step that used to sit between typing a request
+and running it is gone — the spec removed it — so the review that matters is
+the one on the message, not the one on the intent.
 
-**Pre-flight fails before the button, not after.** `components/find/Preflight.tsx`
-works out what is missing *for this particular plan* and disables the run with
-the specific remedy ("This needs an AI connection. **Connect one**").
-Blocking issues stop the run; warnings do not, because Test Mode genuinely does
-not need a mailbox and saying otherwise would be false.
+**A missing connection is stated where it bites.** Email says outright that no
+mailbox is connected and links to Settings, rather than letting somebody
+approve a queue of messages that has nowhere to go. It does not block the
+approval, because a message written and approved in Test Mode is genuinely
+useful and pretending otherwise would be false.
 
 **A suppressed lead is not a lead status.** Anyone who has opted out, or whom
 local rules forbid contacting, is absent from the active list rather than shown

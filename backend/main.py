@@ -13,11 +13,22 @@ agent's rules is a change here too, automatically, which is the point.
 
 Run it from the project root:
 
-    python -m uvicorn backend.main:app --port 8000 --reload
+    python -m backend.main
 
-The dashboard's dev server proxies /api to port 8000, so the client uses the
-same same-origin path in development that it will use behind a reverse proxy in
-production -- no CORS special case, no environment-specific base URL.
+The host and port come from `BACKEND_HOST` (default 127.0.0.1) and
+`BACKEND_PORT` (default 8000), read through `src.settings` so they can be set
+in the environment or in `.env` like everything else. `BACKEND_RELOAD=true`
+turns on the auto-reloader. Nothing is hardcoded, so a stuck port is one
+variable away from being somebody else's problem rather than a blocked morning.
+
+`python -m uvicorn backend.main:app --port 8000` still works and is unchanged;
+it just does not read those variables, because uvicorn's own CLI owns the
+socket in that path.
+
+The dashboard's dev server proxies /api to the same port -- it reads
+`BACKEND_PORT` too -- so the client uses the same same-origin path in
+development that it will use behind a reverse proxy in production: no CORS
+special case, no environment-specific base URL.
 """
 
 from __future__ import annotations
@@ -123,3 +134,70 @@ def health() -> dict[str, Any]:
             "problem": store_problem,
         },
     }
+
+
+# --------------------------------------------------------------------------- #
+# Running it
+# --------------------------------------------------------------------------- #
+
+def _serve() -> None:
+    """
+    Start the service on the configured host and port.
+
+    The port is `BACKEND_PORT` (default 8000), read through `src.settings` so
+    it can come from the environment OR from `.env` like every other setting in
+    this project -- there is no second configuration mechanism to learn.
+
+    The bind is probed before uvicorn is handed the socket, purely so a busy
+    port produces a sentence somebody can act on instead of
+    `WinError 10048: only one usage of each socket address is normally
+    permitted`. The most common cause on Windows is an orphaned `--reload`
+    worker: killing the PID that `netstat` reports kills the supervisor, while
+    the child that actually inherited the socket keeps running, so the port
+    stays busy and the PID stops existing.
+    """
+    import socket
+    import sys
+
+    import uvicorn
+
+    from src import settings
+
+    host = settings.env("BACKEND_HOST", "127.0.0.1")
+    port = settings.env_int("BACKEND_PORT", 8000)
+    reload_on_change = settings.env_bool("BACKEND_RELOAD", False)
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError as exc:
+        print(
+            f"Port {port} on {host} is already in use, so the settings service "
+            f"cannot start.\n"
+            f"  {exc}\n\n"
+            f"Either free it:\n"
+            f"    netstat -ano | findstr :{port}\n"
+            f"  and stop the process that owns it -- on Windows also check for "
+            f"an orphaned\n"
+            f"  reload worker, whose parent PID may already be gone.\n\n"
+            f"Or run on a different port without editing anything:\n"
+            f"    BACKEND_PORT=8001 python -m backend.main\n"
+            f"  (or set BACKEND_PORT in .env)",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    finally:
+        probe.close()
+
+    # `reload` needs an import string rather than the app object: the reloader
+    # re-imports the module in a fresh process on every change.
+    uvicorn.run(
+        "backend.main:app" if reload_on_change else app,
+        host=host,
+        port=port,
+        reload=reload_on_change,
+    )
+
+
+if __name__ == "__main__":
+    _serve()

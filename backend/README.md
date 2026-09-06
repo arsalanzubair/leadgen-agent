@@ -16,7 +16,10 @@ is a change here too, automatically.
 
 ```bash
 pip install -r requirements.txt -r backend/requirements.txt
-python -m uvicorn backend.main:app --port 8000 --reload
+python -m backend.main
+# listens on BACKEND_HOST:BACKEND_PORT (default 127.0.0.1:8000); set
+# BACKEND_PORT in .env or the environment to move it, and the dashboard's
+# dev proxy follows automatically. BACKEND_RELOAD=true for auto-restart.
 ```
 
 The dashboard's dev server proxies `/api` to port 8000, so the client uses the
