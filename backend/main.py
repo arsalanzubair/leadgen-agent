@@ -15,11 +15,14 @@ Run it from the project root:
 
     python -m backend.main
 
-The host and port come from `BACKEND_HOST` (default 127.0.0.1) and
-`BACKEND_PORT` (default 8000), read through `src.settings` so they can be set
-in the environment or in `.env` like everything else. `BACKEND_RELOAD=true`
-turns on the auto-reloader. Nothing is hardcoded, so a stuck port is one
-variable away from being somebody else's problem rather than a blocked morning.
+The port resolves as `BACKEND_PORT` -> `PORT` -> 8000, so it works both here
+and on a platform that injects `PORT` (Render, Heroku, Fly, Cloud Run). The
+host is `BACKEND_HOST`, default 127.0.0.1 -- a deployment needs 0.0.0.0, and
+gets a warning rather than an automatic switch. `BACKEND_RELOAD=true` turns on
+the auto-reloader. All of it is read through `src.settings`, so any of it can
+come from the environment or from `.env` like everything else. Nothing is
+hardcoded, so a stuck port is one variable away from being somebody else's
+problem rather than a blocked morning.
 
 `python -m uvicorn backend.main:app --port 8000` still works and is unchanged;
 it just does not read those variables, because uvicorn's own CLI owns the
@@ -34,7 +37,7 @@ special case, no environment-specific base URL.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,13 +143,63 @@ def health() -> dict[str, Any]:
 # Running it
 # --------------------------------------------------------------------------- #
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+#: The port when nothing in the environment says otherwise.
+DEFAULT_PORT = 8000
+
+
+class BindConfig(NamedTuple):
+    host: str
+    port: int
+    reload: bool
+    #: Set when PORT points at a platform but the host is unreachable from it.
+    warning: str
+
+
+def resolve_bind() -> BindConfig:
+    """
+    Where to listen, from the environment.
+
+    Separated from `_serve` so the precedence can be tested without opening a
+    socket. The order is `BACKEND_PORT` -> `PORT` -> 8000:
+
+      BACKEND_PORT  this project's own name for it, and the more specific of
+                    the two -- somebody who set it meant it, so it wins.
+      PORT          what Render, Heroku, Fly and Cloud Run inject. On those,
+                    binding anything else points the router at a closed
+                    socket, so it is honoured rather than ignored.
+
+    Everything goes through `src.settings`, so either can come from a real
+    environment variable or from `.env`, like the rest of the project.
+    """
+    from src import settings
+
+    host = settings.env("BACKEND_HOST", "127.0.0.1")
+    port = settings.env_int("BACKEND_PORT", settings.env_int("PORT", DEFAULT_PORT))
+    reload_on_change = settings.env_bool("BACKEND_RELOAD", False)
+
+    # A platform that injects PORT routes to the container's external
+    # interface, and loopback is not reachable from outside it. This is a
+    # warning rather than an automatic switch to 0.0.0.0: this service holds
+    # the encrypted credential store, and inferring "expose on every
+    # interface" from an environment variable is not a guess worth making
+    # silently.
+    warning = ""
+    injected = settings.env("PORT")
+    if injected and host in LOOPBACK_HOSTS:
+        warning = (
+            f"PORT is set ({injected}), which usually means a hosting platform, "
+            f"but the service is bound to {host} -- which that platform cannot "
+            f"reach.\nSet BACKEND_HOST=0.0.0.0 if this is a deployment."
+        )
+
+    return BindConfig(host=host, port=port, reload=reload_on_change, warning=warning)
+
+
 def _serve() -> None:
     """
     Start the service on the configured host and port.
-
-    The port is `BACKEND_PORT` (default 8000), read through `src.settings` so
-    it can come from the environment OR from `.env` like every other setting in
-    this project -- there is no second configuration mechanism to learn.
 
     The bind is probed before uvicorn is handed the socket, purely so a busy
     port produces a sentence somebody can act on instead of
@@ -161,11 +214,10 @@ def _serve() -> None:
 
     import uvicorn
 
-    from src import settings
+    host, port, reload_on_change, warning = resolve_bind()
 
-    host = settings.env("BACKEND_HOST", "127.0.0.1")
-    port = settings.env_int("BACKEND_PORT", 8000)
-    reload_on_change = settings.env_bool("BACKEND_RELOAD", False)
+    if warning:
+        print(warning, file=sys.stderr)
 
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:

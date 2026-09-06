@@ -16,8 +16,13 @@ export default defineConfig(({ mode }) => {
    * `load_dotenv(override=False)` on the Python side.
    */
   const rootEnv = loadEnv(mode, path.resolve(__dirname, ".."), "");
-  const backendHost = process.env.BACKEND_HOST || rootEnv.BACKEND_HOST || "127.0.0.1";
-  const backendPort = process.env.BACKEND_PORT || rootEnv.BACKEND_PORT || "8000";
+  const pick = (key: string) => process.env[key] || rootEnv[key] || "";
+
+  // Same precedence as backend/main.py's resolve_bind(): BACKEND_PORT wins,
+  // then the platform-injected PORT, then 8000. The two have to agree, or the
+  // proxy ends up pointing at a port the service is not on.
+  const backendHost = pick("BACKEND_HOST") || "127.0.0.1";
+  const backendPort = pick("BACKEND_PORT") || pick("PORT") || "8000";
 
   return {
     plugins: [react()],

@@ -11,9 +11,12 @@ machinery is called.
 ```bash
 # the settings service, from the project root — see backend/README.md
 python -m backend.main
-# listens on BACKEND_HOST:BACKEND_PORT (default 127.0.0.1:8000); set
-# BACKEND_PORT in .env or the environment to move it, and the dashboard's
-# dev proxy follows automatically. BACKEND_RELOAD=true for auto-restart.
+# port resolves as BACKEND_PORT -> PORT -> 8000, so it also works on a
+# platform that injects PORT (Render, Heroku, Fly, Cloud Run). The dev
+# proxy uses the same order, so moving the backend moves the proxy too.
+# Deploying? Set BACKEND_HOST=0.0.0.0 -- the default is loopback, and it
+# warns rather than exposing every interface on its own guess.
+# BACKEND_RELOAD=true for auto-restart.
 
 # the dashboard, in a second terminal
 npm install
