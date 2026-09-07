@@ -57,6 +57,7 @@ pytest>=8.3.4
 pytest-mock>=3.14.0
 freezegun>=1.5.1                          # cadence / quota-reset clock control
 responses>=0.25.3                         # mock requests-based integrations
+respx>=0.22.0                             # mock httpx: the provider test calls
 
 # Note: email SENDING (Gmail SMTP) and IMAP reply polling use the stdlib
 # (smtplib, imaplib, email) -- no dependency needed. Brevo is called over its
