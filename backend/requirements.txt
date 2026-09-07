@@ -8,9 +8,14 @@
 
 fastapi>=0.115,<1.0          # the HTTP surface
 uvicorn[standard]>=0.30      # the server that runs it
+httpx>=0.27                  # the provider connection tests call out over it
 cryptography>=42.0           # Fernet, for the encrypted secrets store
 ruamel.yaml>=0.18            # YAML round-trip, so saving keeps the comments
 
-# httpx and gspread are already in the project's requirements.txt: httpx makes
-# the provider test calls, gspread verifies a Google Sheets connection by
-# actually opening the sheet.
+# httpx is declared here rather than left to come in behind another package:
+# providers.py imports it at module level, and until this line it only arrived
+# as a transitive dependency of respx -- a test-only package. An install that
+# skipped the test dependencies would have failed at import.
+#
+# gspread comes from the project's requirements.txt, and verifies a Google
+# Sheets connection by actually opening the sheet.
