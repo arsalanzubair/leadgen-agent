@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Callable
 
+from src.integrations.redact import scrub
 from src.reliability import log, retry_once
 from src.settings import env
 
@@ -286,6 +287,16 @@ def complete(
                 continue
 
         if not provider_available(name):
+            # Recorded rather than passed over in silence. A chain where every
+            # provider was merely unavailable used to raise with an empty list
+            # of reasons, which is the least useful error a person can be shown.
+            key_var = KEY_VARS.get(name)
+            if key_var:
+                errors.append(f"{name}: no key configured ({key_var} is unset)")
+            elif name == "ollama":
+                errors.append("ollama: nothing listening on OLLAMA_BASE_URL")
+            else:
+                errors.append(f"{name}: not available")
             continue
 
         try:
@@ -309,7 +320,8 @@ def complete(
             log.warning("llm provider %s failed for task=%s: %s", name, task, exc)
 
     raise LLMUnavailable(
-        f"every LLM provider failed for task={task!r}: " + "; ".join(errors)
+        f"every LLM provider failed for task={task!r}: "
+        + scrub("; ".join(errors))
     )
 
 

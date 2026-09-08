@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from backend import workspace
 from src.integrations import llm
+from src.integrations.redact import scrub
 from src.reliability import ConfigError
 
 router = APIRouter(prefix="/api/niches", tags=["targeting"])
@@ -155,11 +156,24 @@ def draft_niche(body: DraftRequest) -> dict[str, Any]:
             temperature=0.3,
             required_keys=("label", "kind", "good_signals", "interpretation"),
         )
-    except Exception as exc:  # noqa: BLE001 - any provider failure is the same to the user
+    except Exception as exc:  # noqa: BLE001 - every provider failure lands here
+        # The reason, not just the exception's class name.
+        #
+        # This used to report "(LLMUnavailable)" and nothing else, which says
+        # only that something went wrong somewhere in a chain of providers --
+        # not which one, nor why. The underlying message already names the
+        # provider, the status and the model, and it has been through
+        # `scrub` on the way out of the LLM layer; it is scrubbed again here
+        # because a failure from anywhere else has not been.
+        reason = scrub(str(exc)).strip() or exc.__class__.__name__
+        if len(reason) > 400:
+            reason = reason[:399] + "…"
         raise HTTPException(
             502,
-            detail="The AI connection could not read that. Try describing it "
-            f"differently, or build the audience yourself. ({exc.__class__.__name__})",
+            detail=(
+                "The AI connection could not read that. Try describing it "
+                f"differently, or build the audience yourself. Details: {reason}"
+            ),
         )
 
     kind = parsed.get("kind") if parsed.get("kind") in ("local_business", "b2b") else "local_business"
