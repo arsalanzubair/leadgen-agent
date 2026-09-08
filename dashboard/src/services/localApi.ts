@@ -423,6 +423,49 @@ function buildAnalytics(scope: Scope): AnalyticsBundle {
 // --------------------------------------------------------------------------- //
 
 /**
+ * Words that name nobody in particular.
+ *
+ * A request built only from these has issued an instruction without ever
+ * saying who it is about: "find leads" is not a description of anyone.
+ */
+const GENERIC_SUBJECTS = new Set([
+  "leads", "lead", "businesses", "business", "companies", "company",
+  "prospects", "prospect", "people", "clients", "customers", "contacts",
+  "someone", "anyone", "everyone", "some", "more", "new",
+]);
+
+/** A request usually opens with an instruction. The audience is what follows it. */
+const OPENING_INSTRUCTION =
+  /^\s*(?:please\s+)?(?:can\s+you\s+)?(?:go\s+)?(?:and\s+)?(?:find|get|search(?:\s+for)?|look(?:\s+for)?|show(?:\s+me)?|give(?:\s+me)?|list|fetch|pull(?:\s+up)?)\s+(?:me\s+)?(?:some\s+|any\s+|a\s+|the\s+)?/i;
+
+/**
+ * Who the request is about, in the user's own words.
+ *
+ * This returns "" only when the text genuinely names nobody -- an empty box,
+ * or an instruction with no subject. Anything else counts, because somebody
+ * who typed a sentence has said who they mean, whether or not their wording
+ * happens to match an audience the workspace has configured.
+ *
+ * Matched against the original text rather than the lowercased copy: this is
+ * the user's own phrasing, kept intact so it can be shown back to them.
+ */
+function describeAudience(prompt: string): string {
+  // "I sell websites and I'm looking for dentists" -- the audience is the part
+  // after the verb, not the whole sentence.
+  const stated =
+    /(?:looking for|want to reach|interested in|reach out to|target|contact)\s+([^.,;]{3,80})/i.exec(
+      prompt,
+    );
+  const candidate = (stated ? stated[1] : prompt.replace(OPENING_INSTRUCTION, ""))
+    .trim()
+    .replace(/[.,;!?\s]+$/, "");
+  if (!candidate) return "";
+  const words = candidate.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.every((word) => GENERIC_SUBJECTS.has(word))) return "";
+  return candidate.slice(0, 80);
+}
+
+/**
  * Turn what somebody typed into a plan.
  *
  * Keyword matching, deliberately: this is the sample implementation, and the
@@ -511,13 +554,12 @@ function readRequest(prompt: string): RunConfig {
 
   // What they sell and who they want: taken from the sentence itself, because
   // echoing the user's own words back is the point of the confirmation step.
-  const sellMatch = /(?:i|we)\s+(?:sell|offer|provide|do|build|run)\s+([^.,;]{3,80})/.exec(text);
-  const wantMatch =
-    /(?:looking for|want to reach|target|find|contact)\s+([^.,;]{3,80})/.exec(text);
+  const sellMatch =
+    /(?:i|we)\s+(?:sell|offer|provide|do|build|run)\s+([^.,;]{3,80})/i.exec(prompt);
 
   return {
     offering: sellMatch ? sellMatch[1].trim() : "",
-    audience: wantMatch ? wantMatch[1].trim() : "",
+    audience: describeAudience(prompt),
     niche_ids: resolvedNiches.map((niche) => niche.id),
     regions: resolvedRegions,
     locations,
@@ -641,16 +683,30 @@ export const localApi: LeadgenApi = {
   async startRun(config, prompt, scope) {
     await sleep(500);
     if (!scope?.tenant_id) throw new ApiError("Every read has to name its workspace", 400);
-    if (!config.niche_ids.length) {
-      throw new ApiError(
-        "Pick at least one audience to search for.",
-        422,
-        "Nothing was started.",
-      );
+    // Who to look for comes from the request itself.
+    //
+    // This used to require `niche_ids` -- audiences the workspace had been
+    // configured with -- and rejected every plain-language request that did
+    // not happen to match one, telling the user to "pick at least one
+    // audience" from a list this product has no screen for. It also made the
+    // outcome depend on whether that list had finished loading, so the same
+    // sentence submitted or failed depending on how fast the user typed.
+    //
+    // The words of the request decide it now, and configured audiences only
+    // narrow what the run searches.
+    if (!config.audience.trim()) {
+      throw new ApiError("Tell us who you're looking for.", 422, "Nothing was started.");
     }
     if (!config.regions.length) {
       throw new ApiError("Pick at least one place to search in.", 422, "Nothing was started.");
     }
+
+    // With no configured audience matched, the request's own description is
+    // what the run is looking for. `nicheLabelFor` falls back to the id it is
+    // given, so this reads as the user's own phrase wherever it is shown.
+    const targetNicheIds = config.niche_ids.length
+      ? config.niche_ids
+      : [config.audience.trim()];
 
     const stages: StageProgress[] = RUN_STAGES.map((stage) => ({
       stage,
@@ -671,7 +727,7 @@ export const localApi: LeadgenApi = {
       dry_run: config.dry_run,
       started_at: new Date().toISOString(),
       finished_at: null,
-      targets: config.niche_ids.flatMap((niche_id) =>
+      targets: targetNicheIds.flatMap((niche_id) =>
         config.regions.map((region) => ({
           niche_id,
           region,
