@@ -97,6 +97,8 @@ export interface AgentRun {
   /** What the run was asked to do, in the user's own words. */
   prompt: string;
   config: RunConfig;
+  /** Why it stopped, when it stopped badly. Empty on a run that finished. */
+  error?: string;
 }
 
 /** One (niche, region) pair a run covered. Mirrors the backend's BatchTarget. */
@@ -112,6 +114,15 @@ export interface BatchTarget {
  * config schema already supports.
  */
 export interface RunConfig {
+  /**
+   * The audience the request described, as the AI step read it, when the
+   * workspace has nothing matching it yet. Passed straight back when the
+   * search starts so the service can save it then rather than while the user
+   * is still typing. Absent when an existing audience already covers it.
+   */
+  niche_draft?: Record<string, unknown> | null;
+  /** One sentence saying what was understood. Not always present. */
+  interpretation?: string;
   /** What the user sells -- free text, shown back for confirmation. */
   offering: string;
   /** Who they want to reach -- free text. */

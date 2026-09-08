@@ -30,6 +30,7 @@ from typing import Any, Callable, TypeVar
 
 from langgraph.errors import GraphBubbleUp
 
+from src import progress
 from src.state import LeadState, record_error, utcnow
 
 T = TypeVar("T")
@@ -153,20 +154,40 @@ def node(node_name: str) -> Callable[[Callable[..., dict]], Callable[..., dict]]
     def decorate(fn: Callable[..., dict]) -> Callable[..., dict]:
         @functools.wraps(fn)
         def wrapper(state: LeadState, *args: Any, **kwargs: Any) -> dict:
+            # Every node in the graph passes through here, which makes this the
+            # one place progress can be reported from without threading a
+            # callback through thirteen node signatures. `progress.emit` is a
+            # no-op unless something installed a sink, so nothing changes for a
+            # command-line run.
+            def report(outcome: str) -> None:
+                progress.emit(node_name, {
+                    "lead_id": state.get("lead_id", ""),
+                    "company_name": state.get("company_name", ""),
+                    "outcome": outcome,
+                })
+
             try:
                 update = fn(state, *args, **kwargs) or {}
                 update.setdefault("last_updated", utcnow())
+                report("done")
                 return update
             except SkipLead as skip:
                 update = dict(skip.updates)
                 update.setdefault("last_updated", utcnow())
+                # An ordinary control-flow exit, but the lead left the main
+                # path here, and that is worth showing.
+                report("diverted")
                 return update
             except GraphBubbleUp:
+                # N5's interrupt(). The node has not finished -- it is waiting
+                # for a person -- so it reports as paused, not as done.
+                report("paused")
                 raise                      # LangGraph's control flow, not an error
             except ConfigError:
                 raise                      # halt the batch, by design
             except BaseException as exc:   # noqa: BLE001 -- deliberate catch-all
                 log_failure(node_name, state, exc)
+                report("failed")
                 return {
                     "needs_manual_review": True,
                     "manual_review_reason": f"{node_name} failed: {exc}",

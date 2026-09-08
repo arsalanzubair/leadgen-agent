@@ -48,6 +48,7 @@ from backend.routers import (
     integrations,
     niches,
     providers as provider_routes,
+    runs as run_routes,
     settings as settings_routes,
 )
 from backend.workspace import resolve_tenant_id
@@ -88,6 +89,7 @@ if env_bool("BACKEND_ALLOW_CORS", False):
 app.include_router(integrations.router)
 app.include_router(provider_routes.router)
 app.include_router(niches.router)
+app.include_router(run_routes.router)
 app.include_router(settings_routes.router)
 
 

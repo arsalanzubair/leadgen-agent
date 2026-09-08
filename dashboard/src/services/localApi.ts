@@ -95,6 +95,27 @@ export function __setWorkspaceContext(next: {
   if (next.niches) niches = next.niches;
 }
 
+/**
+ * Take on real leads and runs from the settings service.
+ *
+ * Leads are ADDED, never overwritten. Approving, editing or rejecting a lead
+ * is still held in this session -- the service has no route for it yet -- so
+ * replacing a lead record wholesale would quietly undo the decision somebody
+ * just made on the Email screen. New lead_ids arrive; existing ones keep
+ * whatever has happened to them here.
+ *
+ * Runs carry no local edits, so those are replaced outright and stay in step
+ * with the service.
+ */
+export function __ingest(next: { leads?: Lead[]; runs?: AgentRun[] }) {
+  if (next.leads) {
+    const known = new Set(leads.map((lead) => lead.lead_id));
+    const fresh = next.leads.filter((lead) => !known.has(lead.lead_id));
+    if (fresh.length) leads = [...fresh, ...leads];
+  }
+  if (next.runs) runs = next.runs;
+}
+
 /** Reset hook, for tests. Back to empty, which is also where it started. */
 export function __resetSessionState() {
   leads = [];

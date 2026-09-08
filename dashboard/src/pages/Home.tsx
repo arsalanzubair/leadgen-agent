@@ -14,6 +14,8 @@ import { ArrowUp, Globe, Loader2, RefreshCw, Search, ChevronRight } from "lucide
 import { motion } from "framer-motion";
 import * as React from "react";
 
+import { useNavigate } from "react-router-dom";
+
 import { RunProgress } from "@/components/find/RunProgress";
 import { Button } from "@/components/ui/primitives";
 import { InlineError } from "@/components/ui/states";
@@ -54,6 +56,7 @@ function firstNameOf(fullName: string): string {
 
 export function HomePage() {
   const { scope, profile, testMode, setTestMode } = useWorkspace();
+  const navigate = useNavigate();
 
   const [prompt, setPrompt] = React.useState("");
   const [order, setOrder] = React.useState(() => shuffled(SUGGESTIONS));
@@ -81,12 +84,44 @@ export function HomePage() {
     }
   };
 
+  /**
+   * Follow the run while it is going.
+   *
+   * The search happens in the settings service on its own thread, so the only
+   * way this screen knows a step finished is to ask. Polling stops the moment
+   * the run reports it is no longer running -- a finished run is a fixed
+   * record and asking again would tell us nothing.
+   */
+  React.useEffect(() => {
+    if (!run || (run.status !== "running" && run.status !== "queued")) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const latest = await api.getAgentRun(run.run_id, scope);
+        if (!cancelled && latest) setRun(latest);
+      } catch {
+        // A failed poll is not a failed run. Keep the last known state and
+        // try again on the next tick rather than blanking the screen.
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [run?.run_id, run?.status, scope]);
+
   if (run) {
     return (
       <div className="mx-auto w-full max-w-[900px] px-4 pb-16 pt-10 lg:px-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-section font-bold text-primary">Searching</h1>
+            <h1 className="text-section font-bold text-primary">
+              {run.status === "running" || run.status === "queued"
+                ? "Searching"
+                : run.status === "failed"
+                  ? "That search stopped"
+                  : "Search finished"}
+            </h1>
             <p className="mt-1 truncate text-body text-tertiary">{run.prompt}</p>
           </div>
           <Button
@@ -99,7 +134,27 @@ export function HomePage() {
             New search
           </Button>
         </div>
+        {run.status === "failed" && run.error ? (
+          <div className="mb-4">
+            <InlineError message={run.error} />
+          </div>
+        ) : null}
         <RunProgress run={run} />
+        {run.status === "completed" && run.leads_discovered > 0 ? (
+          <div className="mt-6 flex items-center justify-between gap-4 rounded-card border border-default bg-surface p-4">
+            <p className="text-body text-secondary">
+              {run.leads_discovered === 1
+                ? "1 business found."
+                : `${run.leads_discovered} businesses found.`}{" "}
+              {run.leads_qualified > 0
+                ? `${run.leads_qualified} worth contacting.`
+                : "None met your match bar."}
+            </p>
+            <Button variant="secondary" onClick={() => navigate("/leads")}>
+              View leads
+            </Button>
+          </div>
+        ) : null}
       </div>
     );
   }

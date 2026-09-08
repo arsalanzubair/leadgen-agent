@@ -5,24 +5,21 @@
  * implementation, so there is exactly one place where the wiring is decided.
  */
 
-import { httpApi } from "./api";
-import { localApi } from "./localApi";
+import { liveApi } from "./liveApi";
 import { workspaceApi } from "./workspaceApi";
 import type { LeadgenApi, WorkspaceApi } from "./types";
 
 /**
- * Lead and campaign data is held in the browser for the session, and starts
- * empty. There is no sample data behind it: what the screens show is what has
- * actually happened in this session, which is nothing until a run produces
- * something.
+ * Searches are real: they run in the settings service, against the user's own
+ * connections, and the leads on these screens are the ones those runs found.
  *
- * Flip this to false and set VITE_API_BASE_URL to serve it from the HTTP
- * routes in api.ts instead, once the backend has them. Both sides implement
- * the same interface, so the compiler checks the swap for you.
+ * The screens that act on a lead -- approving a draft, marking a LinkedIn
+ * message sent -- are still worked out in the browser, because the service has
+ * no routes for them yet. `liveApi` documents exactly which is which, and
+ * feeds the real leads to the derived side so nothing is computed from
+ * nothing.
  */
-const USE_IN_SESSION_LEAD_DATA = true;
-
-export const api: LeadgenApi = USE_IN_SESSION_LEAD_DATA ? localApi : httpApi;
+export const api: LeadgenApi = liveApi;
 
 /**
  * The user's own configuration is always real. There is no mock of this and
