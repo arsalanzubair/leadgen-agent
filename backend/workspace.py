@@ -435,7 +435,6 @@ def read_rules(tenant_id: str) -> dict[str, Any]:
 
     compliance = document.get("compliance") or {}
     channels = document.get("channels") or {}
-    runtime = document.get("runtime") or {}
 
     return {
         "regions": list(document.get("regions") or []),
@@ -452,7 +451,6 @@ def read_rules(tenant_id: str) -> dict[str, Any]:
         ),
         "blocked_domains": list(compliance.get("blocked_domains") or []),
         "follow_ups": plan,
-        "test_mode_default": bool(runtime.get("test_mode_default", True)),
     }
 
 
@@ -516,10 +514,6 @@ def save_rules(tenant_id: str, patch: dict[str, Any]) -> dict[str, Any]:
 
     if "language_map" in patch:
         document["language_map"] = dict(patch["language_map"])
-
-    if "test_mode_default" in patch:
-        runtime = document.setdefault("runtime", {})
-        runtime["test_mode_default"] = bool(patch["test_mode_default"])
 
     write_config(tenant_id, document)
     return read_rules(tenant_id)

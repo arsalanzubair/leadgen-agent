@@ -45,14 +45,6 @@ interface WorkspaceValue {
   agentRules: AgentRule[];
   setup: SetupState;
 
-  /**
-   * Test Mode. The backend calls this `dry_run`; the product never does.
-   * Defaults to on, which matches the backend's own default -- nothing sends
-   * to a real person until somebody deliberately says so.
-   */
-  testMode: boolean;
-  setTestMode: (on: boolean) => void;
-
   loading: boolean;
   /** True when the settings service could not be reached. */
   offline: boolean;
@@ -69,17 +61,6 @@ interface WorkspaceValue {
 }
 
 const WorkspaceContext = React.createContext<WorkspaceValue | null>(null);
-
-const TEST_MODE_KEY = "outreachr.testMode";
-
-function readTestMode(fallback: boolean): boolean {
-  try {
-    const stored = window.localStorage.getItem(TEST_MODE_KEY);
-    return stored === null ? fallback : stored === "true";
-  } catch {
-    return fallback;
-  }
-}
 
 /** What is configured, and therefore what the product can actually do. */
 function computeSetup(
@@ -107,7 +88,7 @@ function computeSetup(
     has_niches,
     fresh: !has_ai && !has_discovery && !has_profile,
     // A run needs something to search for, somewhere to search, and something
-    // to write with. Sending can be set up later -- Test Mode does not need it.
+    // to write with. Sending can be set up later -- a search does not need it.
     ready_to_run: has_ai && has_discovery && has_niches,
   };
 }
@@ -123,9 +104,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [offline, setOffline] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [nonce, setNonce] = React.useState(0);
-  const [testMode, setTestModeState] = React.useState(() =>
-    readTestMode(DEFAULT_RULES.test_mode_default),
-  );
 
   React.useEffect(() => {
     let cancelled = false;
@@ -182,16 +160,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [rules, niches]);
 
   const refresh = React.useCallback(() => setNonce((n) => n + 1), []);
-
-  const setTestMode = React.useCallback((on: boolean) => {
-    setTestModeState(on);
-    try {
-      window.localStorage.setItem(TEST_MODE_KEY, String(on));
-    } catch {
-      // A browser with storage blocked still gets a working session, it just
-      // starts in Test Mode again next time. That is the safe direction.
-    }
-  }, []);
 
   const guardOffline = React.useCallback(() => {
     if (offline) {
@@ -277,8 +245,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       rules,
       agentRules,
       setup,
-      testMode,
-      setTestMode,
       loading,
       offline,
       error,
@@ -292,8 +258,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       reloadConnections,
     }),
     [
-      tenantId, profile, connections, niches, rules, agentRules, setup, testMode,
-      setTestMode, loading, offline, error, refresh, saveProfile, saveRules,
+      tenantId, profile, connections, niches, rules, agentRules, setup,
+      loading, offline, error, refresh, saveProfile, saveRules,
       saveNiche, removeNiche, addAgentRule, removeAgentRule, reloadConnections,
     ],
   );

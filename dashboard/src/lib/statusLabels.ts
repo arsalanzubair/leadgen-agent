@@ -51,8 +51,6 @@ export const TERMS = {
   updatingRecords: "Updating your records",
   /** An API credential. */
   connectYourTool: "Connect your tool",
-  testMode: "Test Mode",
-  liveMode: "Live Mode",
 } as const;
 
 /** Small helper: fall back to a readable form of an unmapped value. */
@@ -418,35 +416,6 @@ export const RUN_PROGRESS_STEPS: { id: string; label: string; stages: RunStage[]
     stages: ["drafting", "checking_rules", "linkedin_prep", "sending_email", "saving"],
   },
 ];
-
-// --------------------------------------------------------------------------- //
-// Test Mode vs Live Mode
-//
-// The backend calls this `dry_run` and will keep calling it that. In the
-// product it is a mode the user chooses, and the two must never look alike:
-// see components/layout/ModeIndicator.tsx.
-// --------------------------------------------------------------------------- //
-
-export function modeLabel(dryRun: boolean): string {
-  return dryRun ? "Test Mode" : "Live Mode";
-}
-
-export function modeDescription(dryRun: boolean): string {
-  return dryRun
-    ? "Nothing is sent. You see exactly what would go out."
-    : "Approved messages are really sent to real people.";
-}
-
-/**
- * The verb to use about a message, given the mode it was produced in.
- * A message that was never sent must never be described as sent.
- */
-export function sendVerb(dryRun: boolean, channel: Channel | string): string {
-  if (channel === "linkedin") {
-    return dryRun ? "would be queued for you to send" : "queued for you to send";
-  }
-  return dryRun ? "would be sent" : "sent";
-}
 
 // --------------------------------------------------------------------------- //
 // Match quality

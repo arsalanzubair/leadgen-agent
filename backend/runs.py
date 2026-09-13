@@ -270,7 +270,11 @@ def start(tenant_id: str, config: dict[str, Any], prompt: str) -> dict[str, Any]
         "run_id": run_id,
         "tenant_id": tenant_id,
         "status": "running",
-        "dry_run": bool(config.get("dry_run", True)),
+        # There is no dashboard preview mode: every search the dashboard starts
+        # is a real one, regardless of what a request body might carry. The
+        # graph's own --dry-run (tests, CLI regression checks) is a separate,
+        # deliberate concept and is untouched by this.
+        "dry_run": False,
         "started_at": utcnow(),
         "finished_at": None,
         "targets": [
@@ -371,7 +375,7 @@ def _execute(tenant_id: str, run_id: str, config: dict[str, Any]) -> None:
     try:
         batch = run_batch(  # type: ignore[assignment]
             tenant_id,
-            dry_run=bool(config.get("dry_run", True)),
+            dry_run=False,
             limit=int(config.get("max_leads_per_run") or 0),
             resume=True,
             # run_batch filters by a single niche and region; an empty string

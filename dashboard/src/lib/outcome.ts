@@ -196,15 +196,11 @@ export function leadTimeline(lead: Lead, threshold: number): TimelineEntry[] {
       ? cleared && drafted
         ? "Ready to go out"
         : "Never went out"
-      : lead.dry_run
-        ? lead.channel === "linkedin"
-          ? "Test Mode - this would have been queued for you to send"
-          : "Test Mode - this would have been sent, nothing actually went out"
-        : lead.send_status === "pending_manual_send"
-          ? "Waiting for you to send it on LinkedIn"
-          : lead.channel === "both"
-            ? "Email sent; the LinkedIn message is waiting for you to send"
-            : "Sent",
+      : lead.send_status === "pending_manual_send"
+        ? "Waiting for you to send it on LinkedIn"
+        : lead.channel === "both"
+          ? "Email sent; the LinkedIn message is waiting for you to send"
+          : "Sent",
     at: lead.sent_at,
   });
 

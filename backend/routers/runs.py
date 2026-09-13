@@ -92,9 +92,9 @@ def parse_request(body: ParseRequest) -> dict[str, Any]:
         "fit_score_threshold": rules.get("fit_score_threshold", 60),
         "max_leads_per_run": rules.get("max_leads_per_run", 25),
         "follow_up_pace_days": 3,
-        # Test Mode is the default for a fresh plan. Going live is an explicit
-        # act, never an inherited default.
-        "dry_run": True,
+        # There is no preview mode: a plan a user starts is a real search,
+        # using whatever the workspace has actually connected.
+        "dry_run": False,
         # Carried so `POST /api/runs` can save it if the id is new. Not shown.
         "niche_draft": None if niche_id in existing else draft,
         "interpretation": draft.get("interpretation", ""),

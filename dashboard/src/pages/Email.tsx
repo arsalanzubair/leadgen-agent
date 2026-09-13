@@ -8,7 +8,7 @@
  * was one business.
  *
  * Every action happens on the row. Approving does not send from this screen --
- * it clears the message to go, and in Test Mode it records that it would have.
+ * it clears the message to go out, within the sending hours for their country.
  */
 
 import {
@@ -29,9 +29,8 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/layout/AppShell";
-import { ModeChoice, ModeTag } from "@/components/layout/ModeIndicator";
 import { Button, Card, Input, Label, Textarea } from "@/components/ui/primitives";
-import { Disclosure, Monogram } from "@/components/ui/controls";
+import { Monogram } from "@/components/ui/controls";
 import { KpiCard, KpiRow, ListHeader, PanelEmpty, TabPills } from "@/components/ui/patterns";
 import { ErrorState, InlineError, SkeletonTable } from "@/components/ui/states";
 import { useAsync } from "@/hooks/useAsync";
@@ -58,7 +57,7 @@ function isEmailLead(lead: Lead): boolean {
 }
 
 export function EmailPage() {
-  const { scope, connections, testMode, setTestMode } = useWorkspace();
+  const { scope, connections } = useWorkspace();
   const leads = useAsync(() => api.getLeads({ ...scope }), [scope.tenant_id]);
 
   const [tab, setTab] = React.useState<Tab>("attention");
@@ -254,16 +253,6 @@ export function EmailPage() {
           ))}
         </ul>
       )}
-
-      {/*
-        The one place Test Mode can be changed. It governs sending, so it lives
-        on the sending channel rather than on the screen where searches start.
-      */}
-      <div className="mt-8">
-        <Disclosure label="Sending mode">
-          <ModeChoice testMode={testMode} onChange={setTestMode} />
-        </Disclosure>
-      </div>
     </div>
   );
 }
@@ -324,7 +313,6 @@ function EmailRow({
           </span>
         </span>
         <StateTag lead={lead} state={state} />
-        <ModeTag testMode={lead.dry_run} />
         <ChevronDown
           size={16}
           className={cn(

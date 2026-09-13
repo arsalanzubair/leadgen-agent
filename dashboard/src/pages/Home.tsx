@@ -55,7 +55,7 @@ function firstNameOf(fullName: string): string {
 }
 
 export function HomePage() {
-  const { scope, profile, testMode, setTestMode } = useWorkspace();
+  const { scope, profile } = useWorkspace();
   const navigate = useNavigate();
 
   const [prompt, setPrompt] = React.useState("");
@@ -74,9 +74,8 @@ export function HomePage() {
     setError(null);
     try {
       const plan = await api.parseRequest(text, scope);
-      const started = await api.startRun({ ...plan, dry_run: testMode }, text, scope);
+      const started = await api.startRun(plan, text, scope);
       setRun(started);
-      setTestMode(started.dry_run);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That search could not be started.");
     } finally {

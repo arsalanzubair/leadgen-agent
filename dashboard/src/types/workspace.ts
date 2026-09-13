@@ -325,8 +325,6 @@ export interface OutreachRules {
   require_approval_before_send: boolean;
   blocked_domains: string[];
   follow_ups: { step: number; name: string; wait_days: number; channel: Channel }[];
-  /** True when new runs default to Test Mode. */
-  test_mode_default: boolean;
 }
 
 /** The whole workspace, as the settings screens see it. */

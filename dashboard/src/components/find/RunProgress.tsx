@@ -13,7 +13,6 @@
 import { Check, Loader2, Minus, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { ModeTag } from "@/components/layout/ModeIndicator";
 import { Button, Card, Num } from "@/components/ui/primitives";
 import { plural } from "@/lib/format";
 import { RUN_PROGRESS_STEPS, runStatusLabel } from "@/lib/statusLabels";
@@ -61,7 +60,6 @@ export function RunProgress({ run }: { run: AgentRun }) {
           </h2>
         </div>
         <div className="flex items-center gap-2">
-          <ModeTag testMode={run.dry_run} />
           <span className="text-micro text-tertiary">{runStatusLabel(run.status)}</span>
         </div>
       </div>

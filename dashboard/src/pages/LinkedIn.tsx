@@ -33,7 +33,6 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/layout/AppShell";
-import { ModeTag } from "@/components/layout/ModeIndicator";
 import { Button, Card, Input, Label, Textarea } from "@/components/ui/primitives";
 import { Monogram, useCopy } from "@/components/ui/controls";
 import { KpiCard, KpiRow, ListHeader, PanelEmpty, TabPills } from "@/components/ui/patterns";
@@ -323,14 +322,12 @@ function RowHeader({
   name,
   detail,
   tag,
-  testMode,
   open,
   onToggle,
 }: {
   name: string;
   detail: string;
   tag: { label: string; tone: string };
-  testMode: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -354,7 +351,6 @@ function RowHeader({
       >
         {tag.label}
       </span>
-      <ModeTag testMode={testMode} />
       <ChevronDown
         size={16}
         className={cn(
@@ -407,7 +403,6 @@ function ReviewRow({
           label: "Waiting for review",
           tone: "border-accent/30 bg-accent-soft text-accent-text",
         }}
-        testMode={lead.dry_run}
         open={open}
         onToggle={onToggle}
       />
@@ -546,7 +541,6 @@ function QueueRow({
         name={item.company_name}
         detail={`${item.contact_name || "Contact unknown"} · queued ${relativeTime(item.queued_at)}`}
         tag={tag}
-        testMode={item.dry_run}
         open={open}
         onToggle={onToggle}
       />

@@ -50,7 +50,6 @@ class RulesPatch(BaseModel):
     blocked_domains: list[str] | None = None
     channels: dict[str, Any] | None = None
     language_map: dict[str, str] | None = None
-    test_mode_default: bool | None = None
 
 
 class AgentRuleBody(BaseModel):

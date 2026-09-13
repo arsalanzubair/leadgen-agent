@@ -45,5 +45,4 @@ export const DEFAULT_RULES: OutreachRules = {
     { step: 3, name: "Second email", wait_days: 5, channel: "email" },
     { step: 4, name: "Last email", wait_days: 7, channel: "email" },
   ],
-  test_mode_default: true,
 };
