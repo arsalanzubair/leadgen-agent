@@ -38,6 +38,7 @@ from typing import Any
 
 from src.nodes.n0_config_load import TenantConfig
 from src.providers import DiscoveredBusiness, DiscoveryRequest, discovery_for
+from src.providers.results import ProviderError
 from src.reliability import SkipLead, log, node
 from src.settings import SAMPLE_LEADS_PATH, seen_leads_path
 from src.state import (
@@ -191,7 +192,7 @@ def load_fixture_leads(
 
 def discover_for_target(
     config: TenantConfig, target: BatchTarget, *, dry_run: bool = False
-) -> list[LeadState]:
+) -> tuple[list[LeadState], "ProviderError | None"]:
     """
     Ask this workspace's discovery provider about one (niche, region) pair.
 
@@ -202,6 +203,13 @@ def discover_for_target(
     capability applies and the resolver decides who serves it, so a workspace
     that switches from a contact database to its own CSV exports changes one
     line of YAML and this function does not notice.
+
+    Returns `(leads, error)`. `error` is `None` for an ordinary search --
+    including one that genuinely found nobody -- and is the normalized
+    failure when the provider could not complete the operation at all. A
+    caller that only reads `leads` sees exactly the old behaviour; `discover()`
+    reads `error` too, which is what lets a provider failure reach the run
+    record instead of looking identical to a quiet region.
     """
     niche = config.niche(target["niche_id"])
     discovery = niche.get("discovery") or {}
@@ -210,7 +218,7 @@ def discover_for_target(
     limit = int(discovery.get("max_results_per_location", 20))
 
     if dry_run:
-        return load_fixture_leads(config.tenant_id, [target])
+        return load_fixture_leads(config.tenant_id, [target]), None
 
     kind = str(niche.get("type") or "local_business")
     provider = discovery_for(config, niche, tenant_id=config.tenant_id)
@@ -228,8 +236,10 @@ def discover_for_target(
         region=region,
     )
 
+    result = provider.find(request)
+
     leads: list[LeadState] = []
-    for found in provider.find(request):
+    for found in (result.data or []):
         if not found.company_name:
             continue
         if not found.is_open:
@@ -239,11 +249,11 @@ def discover_for_target(
         leads.append(_to_lead(found, target, config.tenant_id, dry_run, kind))
 
     log.info(
-        "discovery tenant=%s niche=%s region=%s provider=%s -> %d",
+        "discovery tenant=%s niche=%s region=%s provider=%s status=%s -> %d",
         config.tenant_id, target["niche_id"], region,
-        getattr(provider, "id", "?"), len(leads),
+        getattr(provider, "id", "?"), result.status.value, len(leads),
     )
-    return leads
+    return leads, (None if result.ok else result.error)
 
 
 def deduplicate(
@@ -284,15 +294,23 @@ def discover(
     *,
     dry_run: bool = False,
     record: bool = True,
-) -> tuple[list[LeadState], list[BatchTarget]]:
+) -> tuple[list[LeadState], list[BatchTarget], list[dict[str, Any]]]:
     """
     Discover across every target, deduplicate, and report low-yield targets.
 
-    Returns (leads, low_yield_targets). A target is low-yield when the number of
-    NEW leads it produced falls below `min_expected_leads * low_yield_threshold_ratio`.
-    Using new-after-dedupe rather than raw results is deliberate: a region that
-    returns 20 companies you already contacted last month IS low yield, and the
-    raw count would hide that.
+    Returns (leads, low_yield_targets, errors). A target is low-yield when the
+    number of NEW leads it produced falls below
+    `min_expected_leads * low_yield_threshold_ratio`. Using new-after-dedupe
+    rather than raw results is deliberate: a region that returns 20 companies
+    you already contacted last month IS low yield, and the raw count would
+    hide that.
+
+    `errors` is the normalized reason for every target whose provider could
+    not complete the operation at all -- as opposed to one that ran and
+    genuinely found nothing, which is not an error and is not in this list.
+    This is what lets a batch that discovered 0 leads because Apollo returned
+    403, or because a niche had no discoverable category, be told apart from
+    a batch that discovered 0 leads because the region is genuinely thin.
     """
     tenant_id = config.tenant_id
     seen = load_seen(tenant_id)
@@ -300,10 +318,13 @@ def discover(
 
     all_leads: list[LeadState] = []
     low_yield: list[BatchTarget] = []
+    errors: list[dict[str, Any]] = []
     newly_seen: dict[str, Any] = {}
 
     for target in targets:
-        raw = discover_for_target(config, target, dry_run=dry_run)
+        raw, error = discover_for_target(config, target, dry_run=dry_run)
+        if error is not None:
+            errors.append({**error.to_dict(), "niche_id": target["niche_id"], "region": target["region"]})
         fresh, dropped = deduplicate(tenant_id, raw, seen=seen)
 
         for lead in fresh:
@@ -345,7 +366,7 @@ def discover(
             "capping batch at max_leads_per_run=%d (discovered %d)",
             config.max_leads_per_run, len(all_leads),
         )
-    return capped, low_yield
+    return capped, low_yield, errors
 
 
 # --------------------------------------------------------------------------- #

@@ -88,6 +88,14 @@ export interface AgentRun {
   targets: BatchTarget[];
   /** Targets that returned fewer new businesses than expected. */
   low_yield_targets: BatchTarget[];
+  /**
+   * A provider that could not complete the search at all -- a rejected key,
+   * a plan limitation, an outage -- kept apart from `low_yield_targets`
+   * because both currently leave `leads_discovered` at 0 and only this list
+   * says whether that is a provider failure or a genuinely quiet region.
+   * Optional because a run record written before this field existed has none.
+   */
+  discovery_errors?: DiscoveryError[];
   leads_discovered: number;
   leads_qualified: number;
   lead_ids: string[];
@@ -106,6 +114,22 @@ export interface BatchTarget {
   niche_id: string;
   region: Region;
   language: string;
+}
+
+/**
+ * A provider that could not complete a search, normalized. Mirrors
+ * `ProviderError.to_dict()` in `src/providers/results.py` -- the backend's
+ * one shared shape for "this failed, and here is what to do about it",
+ * reused for every provider rather than invented per screen.
+ */
+export interface DiscoveryError {
+  niche_id: string;
+  region: Region;
+  provider: string;
+  code: string;
+  user_message: string;
+  user_action: string;
+  retryable: boolean;
 }
 
 /**

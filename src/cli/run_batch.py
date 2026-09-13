@@ -187,8 +187,9 @@ def run_batch(
     }
 
     # -- N1: batch-level discovery + dedupe -------------------------------- #
-    leads, low_yield = discover(config, targets, dry_run=dry_run)
+    leads, low_yield, discovery_errors = discover(config, targets, dry_run=dry_run)
     batch["low_yield_targets"] = low_yield
+    batch["errors"] = discovery_errors
     if limit:
         leads = leads[:limit]
 
@@ -196,6 +197,14 @@ def run_batch(
         console.print(
             "[yellow]low_yield:[/yellow] "
             + ", ".join(f"{t['niche_id']}/{t['region']}" for t in low_yield)
+        )
+    if discovery_errors:
+        console.print(
+            "[red]discovery errors:[/red] "
+            + "; ".join(
+                f"{e['niche_id']}/{e['region']}: {e['code']} - {e['user_message']}"
+                for e in discovery_errors
+            )
         )
     console.print(f"discovered [bold]{len(leads)}[/bold] new lead(s)\n")
 

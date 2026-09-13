@@ -62,6 +62,27 @@ def parse_request(body: ParseRequest) -> dict[str, Any]:
     # description produces the same understanding wherever it is typed.
     draft = draft_niche(DraftRequest(description=prompt))
 
+    # A niche with nothing to search a map or a contact database for will
+    # start a real run and discover exactly nobody, every time -- silently,
+    # because that is a request with no discoverable category rather than a
+    # provider failure. Catching it here, before anything is saved, is what
+    # turns that into an actionable message instead of a search that always
+    # finds "0 businesses".
+    discoverable = (
+        draft["search_terms"] if draft["kind"] == "local_business" else draft["titles"]
+    )
+    if not discoverable:
+        raise HTTPException(
+            422,
+            detail=(
+                "That describes who to contact once found, not what kind of "
+                "business or role to search for. Add a specific type of "
+                "business, trade, or job title -- for example \"dental "
+                "clinics\" or \"Heads of Customer Support\" -- and describe "
+                "the other condition separately."
+            ),
+        )
+
     existing = {n["id"] for n in workspace.read_niches(tenant_id)}
     niche_id = draft["id"] or _slug(draft["label"])
 
@@ -126,6 +147,17 @@ def start_run(body: StartRequest) -> dict[str, Any]:
                 422,
                 detail="That audience is not set up yet. Describe who you want "
                 "to find and start the search again.",
+            )
+        discoverable = (
+            draft.get("search_terms") if draft.get("kind") == "local_business"
+            else draft.get("titles")
+        )
+        if not discoverable:
+            raise HTTPException(
+                422,
+                detail="That audience has no specific business type, trade or "
+                "job title to search for. Describe who to search for and start "
+                "the search again.",
             )
         payload = {k: v for k, v in draft.items() if k != "interpretation"}
         payload["id"] = missing[0]

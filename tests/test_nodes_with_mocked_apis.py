@@ -241,9 +241,10 @@ def test_places_falls_back_to_osm_without_a_key(monkeypatch):
         return [places.PlaceResult(name="Osm Co", source="osm")]
 
     monkeypatch.setattr(places, "_search_nominatim", fake_osm)
-    results = places.search("dental clinic in Manchester")
+    result = places.search("dental clinic in Manchester")
     assert called["osm"]
-    assert results[0].source == "osm"
+    assert result.ok
+    assert result.data[0].source == "osm"
 
 
 def test_places_falls_back_to_osm_when_the_quota_is_spent(monkeypatch):
@@ -251,24 +252,42 @@ def test_places_falls_back_to_osm_when_the_quota_is_spent(monkeypatch):
     Counter("places_requests", cap=2000, period="month").consume(2000)
 
     def explode(query, limit):
-        raise AssertionError("Places must not be called with the quota spent")
+        # What the real _search_google raises once its own counter.check(1)
+        # sees the quota is spent -- QuotaExceeded is a control-flow signal
+        # `search()` catches by name, not a generic failure to swallow.
+        raise QuotaExceeded("places_requests", 2000, 2000, "next month")
 
     monkeypatch.setattr(places, "_search_google", explode)
     monkeypatch.setattr(
         places, "_search_nominatim",
         lambda query, limit: [places.PlaceResult(name="Osm Co", source="osm")],
     )
-    assert places.search("x")[0].source == "osm"
+    result = places.search("x")
+    assert result.ok
+    assert result.data[0].source == "osm"
 
 
-def test_places_returns_empty_when_both_providers_fail(monkeypatch):
+def test_places_returns_an_error_when_both_providers_fail(monkeypatch):
+    """
+    The regression this layer exists for: a double failure must be reported,
+    not handed back as `[]` -- which would be indistinguishable from a real
+    search that came up empty.
+    """
+    from src.providers.results import ErrorCode, ProviderError
+
     monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
 
     def explode(query, limit):
-        raise RuntimeError("nominatim down")
+        raise ProviderError(
+            ErrorCode.PROVIDER_UNAVAILABLE, provider="osm", operation="discover_local",
+            message="nominatim down",
+        )
 
     monkeypatch.setattr(places, "_search_nominatim", explode)
-    assert places.search("x") == []
+    result = places.search("x")
+    assert not result.ok
+    assert result.error.code is ErrorCode.PROVIDER_UNAVAILABLE
+    assert result.data == []
 
 
 def test_places_query_building():
@@ -285,6 +304,8 @@ def test_permanently_closed_detection():
 # =========================================================================== #
 
 def test_apollo_falls_back_to_csv_when_the_api_fails(monkeypatch, tmp_path):
+    from src.providers.results import ErrorCode, ProviderError
+
     monkeypatch.setenv("APOLLO_API_KEY", "fake")
     monkeypatch.setenv("APOLLO_CSV_IMPORT_DIR", str(tmp_path))
     (tmp_path / "b2b_x.csv").write_text(
@@ -292,12 +313,40 @@ def test_apollo_falls_back_to_csv_when_the_api_fails(monkeypatch, tmp_path):
     )
 
     def explode(*args, **kwargs):
-        raise RuntimeError("apollo 403")
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION, provider="apollo", operation="discover_contacts",
+            message="apollo 403",
+        )
 
     monkeypatch.setattr(apollo, "_search_apollo", explode)
-    results = apollo.search(titles=["Head of CS"], csv_glob="b2b_*.csv")
-    assert len(results) == 1
-    assert results[0].source == "csv"
+    result = apollo.search(titles=["Head of CS"], csv_glob="b2b_*.csv")
+    assert result.ok, "a usable CSV export must recover from an API failure"
+    assert len(result.data) == 1
+    assert result.data[0].source == "csv"
+    assert result.metadata["fallback"] == "csv_import"
+
+
+def test_apollo_reports_plan_limitation_when_csv_has_nothing_either(monkeypatch, tmp_path):
+    """
+    No fallback available: the original failure must come back, not `[]`.
+    """
+    from src.providers.results import ErrorCode, ProviderError
+
+    monkeypatch.setenv("APOLLO_API_KEY", "fake")
+    monkeypatch.setenv("APOLLO_CSV_IMPORT_DIR", str(tmp_path))  # empty directory
+
+    def explode(*args, **kwargs):
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION, provider="apollo", operation="discover_contacts",
+            message="apollo 403",
+            user_message="Apollo's free plan does not include API contact search on every account.",
+        )
+
+    monkeypatch.setattr(apollo, "_search_apollo", explode)
+    result = apollo.search(titles=["Head of CS"])
+    assert not result.ok
+    assert result.error.code is ErrorCode.PLAN_LIMITATION
+    assert "free plan" in result.error.user_message
 
 
 def test_apollo_redacted_emails_are_dropped(monkeypatch):

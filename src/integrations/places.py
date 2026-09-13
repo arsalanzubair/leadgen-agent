@@ -21,7 +21,15 @@ from dataclasses import dataclass
 import requests
 
 from src.counters import QuotaExceeded, places_counter
-from src.reliability import log, retry_once
+from src.providers.results import (
+    ErrorCode,
+    ProviderError,
+    ProviderResult,
+    call_with_retries,
+    classify_exception,
+    classify_http_status,
+)
+from src.reliability import log
 from src.settings import env
 
 GOOGLE_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -85,28 +93,54 @@ def has_google_key() -> bool:
     return bool(env("GOOGLE_PLACES_API_KEY"))
 
 
+_GOOGLE_OP = "discover_local"
+_NOMINATIM_OP = "discover_local"
+
+
 def _search_google(query: str, limit: int) -> list[PlaceResult]:
+    """Raises `ProviderError` for every failure -- `[]` here would mean Places
+    answered and found nothing, never that the call did not complete."""
     counter = places_counter()
     counter.check(1)          # raises QuotaExceeded before spending the credit
 
-    response = requests.post(
-        GOOGLE_TEXT_SEARCH_URL,
-        headers={
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": env("GOOGLE_PLACES_API_KEY"),
-            "X-Goog-FieldMask": GOOGLE_FIELD_MASK,
-        },
-        json={"textQuery": query, "maxResultCount": min(limit, 20)},
-        timeout=30,
-    )
+    try:
+        response = requests.post(
+            GOOGLE_TEXT_SEARCH_URL,
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": env("GOOGLE_PLACES_API_KEY"),
+                "X-Goog-FieldMask": GOOGLE_FIELD_MASK,
+            },
+            json={"textQuery": query, "maxResultCount": min(limit, 20)},
+            timeout=30,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="google_places", operation=_GOOGLE_OP) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="google_places", operation=_GOOGLE_OP) from exc
+
     counter.consume(1)
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise classify_http_status(
+            429, response.text, provider="google_places", operation=_GOOGLE_OP,
+            retry_after=float(retry_after) if retry_after else None,
+        )
     if response.status_code != 200:
-        raise RuntimeError(
-            f"Google Places returned {response.status_code}: {response.text[:300]}"
+        raise classify_http_status(
+            response.status_code, response.text, provider="google_places", operation=_GOOGLE_OP,
         )
 
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="google_places", operation=_GOOGLE_OP,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
+
     results: list[PlaceResult] = []
-    for place in response.json().get("places", []):
+    for place in payload.get("places", []):
         results.append(
             PlaceResult(
                 name=(place.get("displayName") or {}).get("text", "").strip(),
@@ -127,28 +161,49 @@ def _search_nominatim(query: str, limit: int) -> list[PlaceResult]:
     """
     OSM fallback. Far thinner data than Places -- typically no website and no
     review count -- but it needs no key and no billing account, which is the
-    whole point of having it.
+    whole point of having it. Raises `ProviderError` for every failure, same
+    contract as `_search_google`.
     """
     _nominatim_throttle()
-    response = requests.get(
-        NOMINATIM_SEARCH_URL,
-        params={
-            "q": query,
-            "format": "jsonv2",
-            "limit": min(limit, 50),
-            "addressdetails": 1,
-            "extratags": 1,
-        },
-        headers={"User-Agent": env("NOMINATIM_USER_AGENT", "leadgen-agent/0.1")},
-        timeout=30,
-    )
+    try:
+        response = requests.get(
+            NOMINATIM_SEARCH_URL,
+            params={
+                "q": query,
+                "format": "jsonv2",
+                "limit": min(limit, 50),
+                "addressdetails": 1,
+                "extratags": 1,
+            },
+            headers={"User-Agent": env("NOMINATIM_USER_AGENT", "leadgen-agent/0.1")},
+            timeout=30,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="osm", operation=_NOMINATIM_OP) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="osm", operation=_NOMINATIM_OP) from exc
+
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise classify_http_status(
+            429, response.text, provider="osm", operation=_NOMINATIM_OP,
+            retry_after=float(retry_after) if retry_after else None,
+        )
     if response.status_code != 200:
-        raise RuntimeError(
-            f"Nominatim returned {response.status_code}: {response.text[:200]}"
+        raise classify_http_status(
+            response.status_code, response.text, provider="osm", operation=_NOMINATIM_OP,
         )
 
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="osm", operation=_NOMINATIM_OP,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
+
     results: list[PlaceResult] = []
-    for item in response.json():
+    for item in payload:
         extra = item.get("extratags") or {}
         name = (item.get("name") or "").strip()
         if not name:
@@ -166,28 +221,43 @@ def _search_nominatim(query: str, limit: int) -> list[PlaceResult]:
     return results
 
 
-def search(query: str, limit: int = 20) -> list[PlaceResult]:
+def search(query: str, limit: int = 20) -> ProviderResult[list[PlaceResult]]:
     """
     Search for local businesses, preferring Google Places and falling back to
     OSM whenever Places is unavailable for ANY reason -- no key, quota spent,
     or a failing request. Discovery degrading to thinner data beats discovery
-    stopping.
+    stopping, so a Google failure is not itself the result here -- it is
+    recorded in `metadata` (a fallback must not hide the original failure)
+    and OSM gets to answer. Only when BOTH have failed does this return
+    `ERROR`; `[]` from either path alone means that provider searched and
+    found nothing.
     """
+    google_error: ProviderError | None = None
+
     if has_google_key():
         try:
-            return retry_once(_search_google, query, limit, _label="google_places")
+            results = call_with_retries(_search_google, query, limit)
+            return ProviderResult.success("google_places", _GOOGLE_OP, results)
         except QuotaExceeded as exc:
             log.warning("%s; falling back to OpenStreetMap", exc)
-        except Exception as exc:  # noqa: BLE001
+            google_error = ProviderError(
+                ErrorCode.QUOTA_EXCEEDED, provider="google_places", operation=_GOOGLE_OP,
+                message=str(exc),
+            )
+        except ProviderError as exc:
             log.warning("Google Places failed (%s); falling back to OpenStreetMap", exc)
+            google_error = exc
     else:
         log.debug("no GOOGLE_PLACES_API_KEY set; using OpenStreetMap")
 
+    metadata = {"google_places_error": google_error.code.value} if google_error else {}
     try:
-        return retry_once(_search_nominatim, query, limit, _label="nominatim")
-    except Exception as exc:  # noqa: BLE001
-        log.error("OpenStreetMap discovery also failed for %r: %s", query, exc)
-        return []
+        results = call_with_retries(_search_nominatim, query, limit)
+    except ProviderError as osm_error:
+        log.error("OpenStreetMap discovery also failed for %r: %s", query, osm_error)
+        return ProviderResult.failure(osm_error, data=[], metadata=metadata)
+
+    return ProviderResult.success("osm", _NOMINATIM_OP, results, metadata=metadata)
 
 
 def build_query(search_term: str, location: str) -> str:

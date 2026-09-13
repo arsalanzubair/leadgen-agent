@@ -39,6 +39,7 @@ from functools import lru_cache
 from typing import Any, Callable
 
 from src.integrations.redact import scrub
+from src.providers.results import ErrorCode, ProviderError
 from src.reliability import log, retry_once
 from src.settings import env
 
@@ -253,6 +254,58 @@ def _mock_complete(prompt: str, task: str, context: dict) -> str:
     return handler(prompt, context)
 
 
+def classify_llm_error(exc: BaseException, *, provider: str, operation: str) -> ProviderError:
+    """
+    Best-effort normalization of a provider client's own exception.
+
+    Every provider here is reached through a LangChain (or LangChain-shaped)
+    client, which wraps the underlying HTTP call in its own exception types --
+    there is no single status code to read the way `classify_http_status`
+    reads one. Pattern-matching the message is the pragmatic middle ground:
+    it is what lets a retired Gemini model surface as `MODEL_NOT_FOUND`
+    rather than an opaque provider failure indistinguishable from a network
+    blip, without this module reimplementing six SDKs' transport layers.
+    """
+    text = str(exc).lower()
+
+    if "model" in text and (
+        "not found" in text or "404" in text or "does not exist" in text
+        or "not supported" in text
+    ):
+        return ProviderError(
+            ErrorCode.MODEL_NOT_FOUND, provider, operation, message=str(exc),
+            user_message=f"The model configured for {provider} is not available.",
+            user_action=f"Update the {provider.upper()}_MODEL setting to a current model name.",
+        )
+    if "quota" in text or "resource_exhausted" in text:
+        return ProviderError(
+            ErrorCode.QUOTA_EXCEEDED, provider, operation, message=str(exc),
+        )
+    if "429" in text or "rate limit" in text or "too many requests" in text:
+        return ProviderError(
+            ErrorCode.RATE_LIMITED, provider, operation, message=str(exc), retryable=True,
+        )
+    if "401" in text or "unauthorized" in text or "invalid api key" in text or "api key not valid" in text:
+        return ProviderError(ErrorCode.AUTH_ERROR, provider, operation, message=str(exc))
+    if "403" in text or "permission" in text or "forbidden" in text:
+        return ProviderError(ErrorCode.PERMISSION_DENIED, provider, operation, message=str(exc))
+    if "timed out" in text or "timeout" in text:
+        return ProviderError(
+            ErrorCode.TIMEOUT, provider, operation, message=str(exc), retryable=True,
+        )
+    if any(word in text for word in ("connection", "network", "dns", "resolve")):
+        return ProviderError(
+            ErrorCode.NETWORK_ERROR, provider, operation, message=str(exc), retryable=True,
+        )
+    if any(code in text for code in ("500", "502", "503", "504")) or "unavailable" in text:
+        return ProviderError(
+            ErrorCode.PROVIDER_UNAVAILABLE, provider, operation, message=str(exc), retryable=True,
+        )
+    if isinstance(exc, ValueError) and "json" in text:
+        return ProviderError(ErrorCode.BAD_RESPONSE, provider, operation, message=str(exc))
+    return ProviderError(ErrorCode.UNKNOWN_PROVIDER_ERROR, provider, operation, message=str(exc))
+
+
 # --------------------------------------------------------------------------- #
 # The public interface
 # --------------------------------------------------------------------------- #
@@ -284,6 +337,7 @@ def complete(
     """
     context = context or {}
     errors: list[str] = []
+    error_details: list[ProviderError] = []
     order = tuple(chain) if chain else tuple(resolve_provider_chain(provider))
 
     for name in order:
@@ -297,6 +351,9 @@ def complete(
                 )
             except LLMUnavailable as exc:
                 errors.append(f"mock: {exc}")
+                error_details.append(
+                    ProviderError(ErrorCode.UNSUPPORTED_OPERATION, "mock", task, message=str(exc))
+                )
                 continue
 
         if not provider_available(name):
@@ -305,11 +362,15 @@ def complete(
             # of reasons, which is the least useful error a person can be shown.
             key_var = KEY_VARS.get(name)
             if key_var:
-                errors.append(f"{name}: no key configured ({key_var} is unset)")
+                reason = f"no key configured ({key_var} is unset)"
             elif name == "ollama":
-                errors.append("ollama: nothing listening on OLLAMA_BASE_URL")
+                reason = "nothing listening on OLLAMA_BASE_URL"
             else:
-                errors.append(f"{name}: not available")
+                reason = "not available"
+            errors.append(f"{name}: {reason}")
+            error_details.append(
+                ProviderError(ErrorCode.CONFIGURATION_ERROR, name, task, message=reason)
+            )
             continue
 
         try:
@@ -330,12 +391,18 @@ def complete(
             return LLMResponse(text=str(text), provider=name, model=model_name(name), raw=result)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")
+            error_details.append(classify_llm_error(exc, provider=name, operation=task))
             log.warning("llm provider %s failed for task=%s: %s", name, task, exc)
 
-    raise LLMUnavailable(
+    unavailable = LLMUnavailable(
         f"every LLM provider failed for task={task!r}: "
         + scrub("; ".join(errors))
     )
+    # Structured detail, for a caller that wants more than a scrubbed string --
+    # e.g. telling a retired model apart from a rejected key. `str(exc)` on
+    # this instance is unchanged, so every existing caller keeps working.
+    unavailable.errors = error_details  # type: ignore[attr-defined]
+    raise unavailable
 
 
 # --------------------------------------------------------------------------- #

@@ -99,16 +99,41 @@ You work for ANY industry. Never assume a vertical, never substitute a \
 different industry for the one described, and never invent a niche the person \
 did not ask for. If they say "machine shops", the audience is machine shops.
 
+DISCOVERY vs QUALIFICATION -- keep these separate, because they are answered \
+by different tools:
+- search_terms and titles are what a map search or a contact database can \
+actually look up: a type of shop, trade or profession ("dental clinic", \
+"machine shop"), or a job title ("Head of Support"). These must be real, \
+searchable categories -- never a technology a business uses or lacks, a \
+policy, a practice, or anything only knowable from reading their website.
+- good_signals and disqualifiers are for everything else the description \
+mentions that discovery cannot filter on: using or lacking a particular \
+tool, having or lacking some feature, following some practice. "without \
+AI-powered customer support", "still using paper forms", "using competitor \
+X" all belong here, to be checked once a business is FOUND -- never used to \
+find one.
+- When the description names both a real category and a qualifying trait \
+("restaurants that don't take online bookings"), split them: search_terms \
+gets the category, good_signals/disqualifiers gets the trait.
+- When the description names NO real, searchable category at all -- only a \
+trait, or a word too generic to search with ("businesses", "companies") -- \
+leave search_terms and titles EMPTY rather than inventing one. An invented \
+category returns confident-looking results for the wrong audience; an \
+honest empty list says plainly that discovery needs a real category to work \
+with.
+
 Rules:
 - kind is "local_business" for anything found on a map (shops, clinics, \
 trades, restaurants, salons, gyms), and "b2b" for companies reached through a \
 named person in a role.
-- search_terms: 2-5 short phrases somebody would type into a maps search. \
-Only for local_business; leave empty for b2b.
-- titles: 3-6 job titles worth writing to. Only for b2b; leave empty otherwise.
+- search_terms: 2-5 short phrases somebody would type into a maps search, or \
+empty per the rule above. Only for local_business; leave empty for b2b.
+- titles: 3-6 job titles worth writing to, or empty per the rule above. Only \
+for b2b; leave empty otherwise.
 - good_signals: 4-6 observable, checkable things that make one of these worth \
-contacting. Each must be something you could verify from a website or a job \
-posting - not a guess about intent.
+contacting, including any qualifying trait from the description that is not \
+itself a search category. Each must be something you could verify from a \
+website or a job posting - not a guess about intent.
 - disqualifiers: 2-4 things that rule one out.
 - must_have: 1-2 things that must be true for the business to be reachable.
 - channel_default: "email" for local businesses, "linkedin" for companies \

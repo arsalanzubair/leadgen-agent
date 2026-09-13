@@ -171,6 +171,57 @@ def test_a_rejected_key_still_fails_the_check():
 
 
 # --------------------------------------------------------------------------- #
+# A retired model must be a diagnosis, never a bare failure
+# --------------------------------------------------------------------------- #
+
+
+def test_a_retired_model_classifies_as_model_not_found():
+    """
+    What actually happens on the wire when GEMINI_MODEL names a model Google
+    has retired: `ChatGoogleGenerativeAI` raises with the model name and a 404
+    in its message, wrapped in whatever exception langchain-google-genai uses.
+    This must not be lumped in with "provider unreachable" -- the fix is a
+    settings change, not a retry.
+    """
+    from src.providers.results import ErrorCode
+
+    exc = ValueError(
+        f"404 models/{RETIRED} is not found for API version v1beta, or is "
+        "not supported for generateContent"
+    )
+    error = llm.classify_llm_error(exc, provider="gemini", operation="qualification")
+    assert error.code is ErrorCode.MODEL_NOT_FOUND
+    assert error.retryable is False
+    assert "gemini" in error.user_action.lower() or "model" in error.user_action.lower()
+
+
+def test_an_exhausted_chain_carries_the_classified_reason_per_provider(monkeypatch: pytest.MonkeyPatch):
+    """
+    `LLMUnavailable`'s message stays a plain string (every existing caller
+    reads it with `str(exc)`), but a caller that wants to tell a retired
+    model apart from a rejected key can read `.errors`.
+    """
+    from src.providers.results import ErrorCode
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+
+    def explode(*args, **kwargs):
+        raise ValueError(f"404 models/{RETIRED} is not found for API version v1beta")
+
+    class FakeClient:
+        def invoke(self, messages):
+            return explode()
+
+    monkeypatch.setattr(llm, "_build_client", lambda *a, **k: FakeClient())
+
+    with pytest.raises(llm.LLMUnavailable) as caught:
+        llm.complete("prompt", task="t", chain=("gemini",), allow_mock=False)
+
+    errors = getattr(caught.value, "errors", [])
+    assert any(e.code is ErrorCode.MODEL_NOT_FOUND and e.provider == "gemini" for e in errors)
+
+
+# --------------------------------------------------------------------------- #
 # The retired name is gone, and stays gone
 # --------------------------------------------------------------------------- #
 

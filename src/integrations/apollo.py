@@ -25,7 +25,15 @@ from typing import Any, Iterable
 
 import requests
 
-from src.reliability import log, retry_once
+from src.providers.results import (
+    ErrorCode,
+    ProviderError,
+    ProviderResult,
+    call_with_retries,
+    classify_exception,
+    classify_http_status,
+)
+from src.reliability import log
 from src.settings import ROOT, env
 
 APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
@@ -184,6 +192,9 @@ def has_api_key() -> bool:
     return bool(env("APOLLO_API_KEY"))
 
 
+_OPERATION = "discover_contacts"
+
+
 def _search_apollo(
     titles: list[str],
     locations: list[str],
@@ -191,6 +202,11 @@ def _search_apollo(
     employee_range: list[int] | None,
     limit: int,
 ) -> list[ContactResult]:
+    """
+    One call to `mixed_people/search`. Raises `ProviderError` for every
+    failure -- never returns `[]` to mean anything but "Apollo answered and
+    there was nobody matching this."
+    """
     payload: dict[str, Any] = {
         "page": 1,
         "per_page": min(limit, 25),
@@ -206,26 +222,58 @@ def _search_apollo(
             f"{employee_range[0]},{employee_range[1]}"
         ]
 
-    response = requests.post(
-        APOLLO_SEARCH_URL,
-        headers={
-            "Content-Type": "application/json",
-            "Cache-Control": "no-cache",
-            "x-api-key": env("APOLLO_API_KEY"),
-        },
-        json=payload,
-        timeout=45,
-    )
+    try:
+        response = requests.post(
+            APOLLO_SEARCH_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Cache-Control": "no-cache",
+                "x-api-key": env("APOLLO_API_KEY"),
+            },
+            json=payload,
+            timeout=45,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="apollo", operation=_OPERATION) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="apollo", operation=_OPERATION) from exc
+
     if response.status_code == 403:
-        raise RuntimeError(
-            "Apollo returned 403 -- the free plan does not include API search "
-            "on all accounts. Use the CSV import path instead."
+        # Named and documented rather than left to the generic 403 mapping:
+        # this is the single most common way this call fails, and "the free
+        # plan does not include API search on every account" is a fact a user
+        # can act on, where "permission denied" on its own is not.
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION,
+            provider="apollo",
+            operation=_OPERATION,
+            message=f"403: {response.text[:200]}",
+            user_message="Apollo's free plan does not include API contact search on every account.",
+            user_action="Use the CSV import folder instead, or upgrade the Apollo plan.",
+            retryable=False,
+            http_status=403,
+        )
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise classify_http_status(
+            429, response.text, provider="apollo", operation=_OPERATION,
+            retry_after=float(retry_after) if retry_after else None,
         )
     if response.status_code != 200:
-        raise RuntimeError(f"Apollo returned {response.status_code}: {response.text[:300]}")
+        raise classify_http_status(
+            response.status_code, response.text, provider="apollo", operation=_OPERATION,
+        )
+
+    try:
+        payload_json = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="apollo", operation=_OPERATION,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
 
     results: list[ContactResult] = []
-    for person in response.json().get("people", []):
+    for person in payload_json.get("people", []):
         org = person.get("organization") or {}
         # Apollo's free plan usually redacts the email as "email_not_unlocked@..."
         raw_email = (person.get("email") or "").strip().lower()
@@ -260,29 +308,46 @@ def search(
     employee_range: list[int] | None = None,
     limit: int = 25,
     csv_glob: str = "",
-) -> list[ContactResult]:
+) -> ProviderResult[list[ContactResult]]:
     """
     Discover B2B contacts, preferring the API and falling back to CSV import.
 
     Both paths are additive rather than exclusive when the API returns nothing:
     an empty API result with CSVs sitting in the import folder should still
-    produce leads.
+    produce leads. A genuine API failure (Section 9's "plan limitation ->
+    don't endlessly retry -> use a valid fallback if available") tries CSV
+    import too, before giving up -- but if CSV has nothing either, the
+    original failure is what comes back, not a bare `[]`. No API key at all
+    is a configuration fact, not a failure: CSV-only has always been how a
+    keyless install produces B2B leads.
     """
-    results: list[ContactResult] = []
-
-    if has_api_key():
-        try:
-            results = retry_once(
-                _search_apollo,
-                titles or [], locations or [], industries or [],
-                employee_range, limit, _label="apollo_search",
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Apollo API search failed (%s); trying CSV import", exc)
-    else:
+    if not has_api_key():
         log.debug("no APOLLO_API_KEY set; using CSV import only")
+        rows = import_csvs(csv_glob) if csv_glob else []
+        return ProviderResult.success(
+            "apollo", _OPERATION, rows[:limit] if limit else rows,
+            metadata={"source": "csv_only"},
+        )
+
+    try:
+        results = call_with_retries(
+            _search_apollo,
+            titles or [], locations or [], industries or [],
+            employee_range, limit,
+        )
+    except ProviderError as err:
+        log.warning("Apollo API search failed (%s); trying CSV import", err)
+        if csv_glob:
+            fallback_rows = import_csvs(csv_glob)
+            if fallback_rows:
+                return ProviderResult.success(
+                    "apollo", _OPERATION,
+                    fallback_rows[:limit] if limit else fallback_rows,
+                    metadata={"fallback": "csv_import", "original_error": err.code.value},
+                )
+        return ProviderResult.failure(err)
 
     if len(results) < limit and csv_glob:
-        results.extend(import_csvs(csv_glob))
+        results = results + import_csvs(csv_glob)
 
-    return results[:limit] if limit else results
+    return ProviderResult.success("apollo", _OPERATION, results[:limit] if limit else results)

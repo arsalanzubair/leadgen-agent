@@ -284,11 +284,14 @@ class DiscoveryProvider(Protocol):
     def available(self) -> bool:
         ...
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
+    def find(self, request: DiscoveryRequest) -> "ProviderResult[list[DiscoveredBusiness]]":
         """
-        Never raises for an ordinary failure. A provider that is down, out of
-        quota or misconfigured returns `[]` and logs why -- discovery producing
-        fewer leads is a bad batch, discovery raising is a broken product.
+        Never raises. A provider that is down, out of quota or misconfigured
+        returns a `ProviderResult` with `status=ERROR` and a normalized
+        `error`, not a bare `[]` -- `[]` inside a `SUCCESS_EMPTY` result is the
+        only thing that means "searched, found nobody". Discovery producing
+        fewer leads is a bad batch; discovery silently producing zero because
+        a call failed is a broken product.
         """
         ...
 

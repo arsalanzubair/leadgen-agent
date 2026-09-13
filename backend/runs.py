@@ -283,6 +283,7 @@ def start(tenant_id: str, config: dict[str, Any], prompt: str) -> dict[str, Any]
             for r in regions
         ],
         "low_yield_targets": [],
+        "discovery_errors": [],
         "leads_discovered": 0,
         "leads_qualified": 0,
         "lead_ids": [],
@@ -404,6 +405,10 @@ def _execute(tenant_id: str, run_id: str, config: dict[str, Any]) -> None:
             record["error"] = error
             if batch:
                 record["low_yield_targets"] = batch.get("low_yield_targets", [])
+                # A provider that could not complete the search at all, kept
+                # distinct from a target that genuinely came up thin -- both
+                # currently land at 0 leads, and only this list says which.
+                record["discovery_errors"] = batch.get("errors", [])
                 record["needs_manual_review"] = batch.get("needs_manual_review", [])
                 record["archived"] = batch.get("archived", [])
                 record["targets"] = batch.get("targets", record["targets"])

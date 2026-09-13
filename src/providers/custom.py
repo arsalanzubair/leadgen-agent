@@ -93,6 +93,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 import urllib.parse
 from datetime import datetime, timezone
@@ -109,6 +110,7 @@ from src.providers.base import (
     ProviderContext,
     TranslatedText,
 )
+from src.providers.results import ErrorCode, ProviderError, ProviderResult, classify_http_status
 from src.providers.registry import ProviderSpec
 from src.reliability import log
 from src.settings import env, env_bool
@@ -596,6 +598,29 @@ class CustomLLM:
         return parsed, response
 
 
+#: How much of `CustomEndpointError`'s own wording maps onto the normalized
+#: vocabulary. `post_json` already puts the status code and the failure kind
+#: into the message text -- this reads it back rather than threading a second,
+#: structured channel through `call()` for every capability that wraps it.
+_STATUS_IN_MESSAGE = re.compile(r"\banswered (\d{3})\b")
+
+
+def _classify_custom_error(exc: CustomEndpointError, *, operation: str) -> ProviderError:
+    text = str(exc)
+    match = _STATUS_IN_MESSAGE.search(text)
+    if match:
+        return classify_http_status(int(match.group(1)), text, provider="custom", operation=operation)
+    if "did not answer within" in text:
+        return ProviderError(ErrorCode.TIMEOUT, "custom", operation, message=text, retryable=True)
+    if "could not be reached" in text:
+        return ProviderError(ErrorCode.NETWORK_ERROR, "custom", operation, message=text, retryable=True)
+    if "not JSON" in text or "unexpected shape" in text:
+        return ProviderError(ErrorCode.BAD_RESPONSE, "custom", operation, message=text)
+    if "No endpoint URL" in text or "https://" in text or "no host" in text:
+        return ProviderError(ErrorCode.CONFIGURATION_ERROR, "custom", operation, message=text)
+    return ProviderError(ErrorCode.UNKNOWN_PROVIDER_ERROR, "custom", operation, message=text)
+
+
 class CustomDiscovery:
     """A tenant's own source of businesses or contacts."""
 
@@ -607,7 +632,7 @@ class CustomDiscovery:
     def available(self) -> bool:
         return bool(self._config.base_url)
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
         payload = {
             "kind": request.kind,
             "search_terms": request.search_terms,
@@ -622,15 +647,22 @@ class CustomDiscovery:
         try:
             answer = call(self._config, "find", payload)
         except CustomEndpointError as exc:
-            # Discovery never raises. An empty target is reported as low yield
-            # on the batch summary, where a human will see it.
             log.warning("custom discovery failed for niche=%s: %s", request.niche_id, exc)
-            return []
+            return ProviderResult.failure(
+                _classify_custom_error(exc, operation="discover"), data=[]
+            )
 
         rows = answer.get("results")
         if not isinstance(rows, list):
             log.warning("custom discovery answered without a 'results' list")
-            return []
+            return ProviderResult.failure(
+                ProviderError(
+                    ErrorCode.BAD_RESPONSE, "custom", "discover",
+                    message="response had no 'results' list",
+                    user_message="The custom endpoint answered without the expected results list.",
+                ),
+                data=[],
+            )
 
         found: list[DiscoveredBusiness] = []
         for row in rows:
@@ -662,7 +694,9 @@ class CustomDiscovery:
                 )
             )
         limit = request.limit
-        return found[:limit] if limit else found
+        return ProviderResult.success(
+            "custom", "discover", found[:limit] if limit else found,
+        )
 
 
 class CustomEnrichment:

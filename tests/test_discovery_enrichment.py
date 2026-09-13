@@ -30,6 +30,7 @@ from src.nodes.n2_enrichment import (
     n2_enrichment,
     select_hunter_candidates,
 )
+from src.providers.results import ProviderResult
 from src.state import BatchTarget, make_dedupe_key, new_lead_state
 
 EXAMPLE = "example_tenant"
@@ -81,7 +82,7 @@ def test_french_fixture_is_present_and_tagged_eu():
 def test_dry_run_discover_does_not_write_the_dedupe_ledger(config):
     forget_all(EXAMPLE)
     targets = resolve_batch_targets(config)
-    leads, _ = discover(config, targets, dry_run=True)
+    leads, _, _ = discover(config, targets, dry_run=True)
     assert leads
     assert load_seen(EXAMPLE) == {}, (
         "a dry run must not poison the ledger and make tomorrow's live batch "
@@ -153,51 +154,86 @@ def test_low_yield_is_flagged_not_raised(config, monkeypatch):
     """A thin region is information, not a batch failure."""
     monkeypatch.setattr(
         "src.nodes.n1_discovery.discover_for_target",
-        lambda cfg, target, dry_run=False: [
-            new_lead_state(
-                tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
-                region=target["region"], company_name="Only One",
-                website="https://only-one.example",
-            )
-        ],
+        lambda cfg, target, dry_run=False: (
+            [
+                new_lead_state(
+                    tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
+                    region=target["region"], company_name="Only One",
+                    website="https://only-one.example",
+                )
+            ],
+            None,
+        ),
     )
     targets = resolve_batch_targets(config)
-    leads, low_yield = discover(config, targets, dry_run=False, record=False)
+    leads, low_yield, errors = discover(config, targets, dry_run=False, record=False)
     assert leads                      # the batch still produced work
     assert len(low_yield) == len(targets)
+    assert errors == []               # a thin region is not a provider failure
 
 
 def test_good_yield_is_not_flagged(config, monkeypatch):
     def many(cfg, target, dry_run=False):
-        return [
-            new_lead_state(
-                tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
-                region=target["region"], company_name=f"Co {i}",
-                website=f"https://co{i}-{target['region']}.example",
-            )
-            for i in range(10)
-        ]
+        return (
+            [
+                new_lead_state(
+                    tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
+                    region=target["region"], company_name=f"Co {i}",
+                    website=f"https://co{i}-{target['region']}.example",
+                )
+                for i in range(10)
+            ],
+            None,
+        )
 
     monkeypatch.setattr("src.nodes.n1_discovery.discover_for_target", many)
     targets = resolve_batch_targets(config)[:1]
-    _, low_yield = discover(config, targets, dry_run=False, record=False)
+    _, low_yield, _ = discover(config, targets, dry_run=False, record=False)
     assert low_yield == []
 
 
 def test_max_leads_per_run_caps_the_batch(config, monkeypatch):
     def flood(cfg, target, dry_run=False):
-        return [
-            new_lead_state(
-                tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
-                region=target["region"], company_name=f"Co {target['region']} {i}",
-                website=f"https://co{i}-{target['region']}.example",
-            )
-            for i in range(50)
-        ]
+        return (
+            [
+                new_lead_state(
+                    tenant_id=cfg.tenant_id, niche_id=target["niche_id"],
+                    region=target["region"], company_name=f"Co {target['region']} {i}",
+                    website=f"https://co{i}-{target['region']}.example",
+                )
+                for i in range(50)
+            ],
+            None,
+        )
 
     monkeypatch.setattr("src.nodes.n1_discovery.discover_for_target", flood)
-    leads, _ = discover(config, resolve_batch_targets(config), record=False)
+    leads, _, _ = discover(config, resolve_batch_targets(config), record=False)
     assert len(leads) == config.max_leads_per_run
+
+
+def test_a_discovery_failure_is_reported_not_swallowed(config, monkeypatch):
+    """
+    The regression this whole layer exists for: a provider that could not
+    complete the operation must not look like a region with nothing in it.
+    """
+    from src.providers.results import ErrorCode, ProviderError
+
+    failure = ProviderError(
+        ErrorCode.PLAN_LIMITATION, provider="apollo", operation="discover_contacts",
+        message="403", user_message="Apollo's free plan does not include API search.",
+    )
+    monkeypatch.setattr(
+        "src.nodes.n1_discovery.discover_for_target",
+        lambda cfg, target, dry_run=False: ([], failure),
+    )
+    targets = resolve_batch_targets(config)[:1]
+    leads, low_yield, errors = discover(config, targets, dry_run=False, record=False)
+    assert leads == []
+    assert low_yield  # zero new leads is still low-yield by the ratio math
+    assert len(errors) == 1
+    assert errors[0]["code"] == "plan_limitation"
+    assert errors[0]["niche_id"] == targets[0]["niche_id"]
+    assert errors[0]["region"] == targets[0]["region"]
 
 
 # --------------------------------------------------------------------------- #
@@ -207,17 +243,21 @@ def test_max_leads_per_run_caps_the_batch(config, monkeypatch):
 def test_local_discovery_uses_places(config, monkeypatch):
     monkeypatch.setattr(
         places, "search",
-        lambda query, limit=20: [
-            places.PlaceResult(
-                name="Bright Smile", address="Manchester", website="https://bs.co.uk",
-                phone="0161 555 0100", rating=4.6, review_count=34, source="google_places",
-            )
-        ],
+        lambda query, limit=20: ProviderResult.success(
+            "osm", "discover_local",
+            [
+                places.PlaceResult(
+                    name="Bright Smile", address="Manchester", website="https://bs.co.uk",
+                    phone="0161 555 0100", rating=4.6, review_count=34, source="google_places",
+                )
+            ],
+        ),
     )
     from src.nodes.n1_discovery import discover_for_target
 
     target = BatchTarget(niche_id="local_dental", region="UK", language="en")
-    leads = discover_for_target(config, target)
+    leads, error = discover_for_target(config, target)
+    assert error is None
     assert leads
     assert leads[0]["company_name"] == "Bright Smile"
     assert leads[0]["source"] == "google_places"
@@ -227,31 +267,38 @@ def test_local_discovery_uses_places(config, monkeypatch):
 def test_permanently_closed_places_are_dropped(config, monkeypatch):
     monkeypatch.setattr(
         places, "search",
-        lambda query, limit=20: [
-            places.PlaceResult(name="Gone", business_status="CLOSED_PERMANENTLY")
-        ],
+        lambda query, limit=20: ProviderResult.success(
+            "osm", "discover_local",
+            [places.PlaceResult(name="Gone", business_status="CLOSED_PERMANENTLY")],
+        ),
     )
     from src.nodes.n1_discovery import discover_for_target
 
     target = BatchTarget(niche_id="local_dental", region="UK", language="en")
-    assert discover_for_target(config, target) == []
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads == []
 
 
 def test_b2b_discovery_uses_apollo(config, monkeypatch):
     monkeypatch.setattr(
         apollo, "search",
-        lambda **kwargs: [
-            apollo.ContactResult(
-                company_name="Maple Route", contact_name="Kieran Moreau",
-                title="Head of CS", linkedin_url="https://linkedin.com/in/kieran",
-                employee_count=80, source="apollo",
-            )
-        ],
+        lambda **kwargs: ProviderResult.success(
+            "apollo", "discover_contacts",
+            [
+                apollo.ContactResult(
+                    company_name="Maple Route", contact_name="Kieran Moreau",
+                    title="Head of CS", linkedin_url="https://linkedin.com/in/kieran",
+                    employee_count=80, source="apollo",
+                )
+            ],
+        ),
     )
     from src.nodes.n1_discovery import discover_for_target
 
     target = BatchTarget(niche_id="b2b_saas_ops", region="CA", language="en")
-    leads = discover_for_target(config, target)
+    leads, error = discover_for_target(config, target)
+    assert error is None
     assert leads[0]["contact_name"] == "Kieran Moreau"
     assert any("decision-maker" in s for s in leads[0]["signals"])
 

@@ -29,6 +29,7 @@ from src.providers.base import (
     ProviderContext,
 )
 from src.providers.registry import ProviderSpec
+from src.providers.results import ErrorCode, ProviderError, ProviderResult
 from src.reliability import log
 
 # --------------------------------------------------------------------------- #
@@ -94,8 +95,31 @@ class LocalSearchDiscovery:
     def available(self) -> bool:
         return True
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
+        # No category or nowhere to look is not "zero businesses" -- it is
+        # nothing having been asked. Looping over an empty list here used to
+        # produce a silent, unlogged `[]` indistinguishable from a real search
+        # that came up empty.
+        if not request.search_terms or not request.locations:
+            return ProviderResult.failure(
+                ProviderError(
+                    ErrorCode.CONFIGURATION_ERROR,
+                    provider="osm",
+                    operation="discover_local",
+                    message=(
+                        f"niche={request.niche_id!r} region={request.region!r}: "
+                        f"search_terms={request.search_terms!r} "
+                        f"locations={request.locations!r}"
+                    ),
+                    user_message="This audience has no searchable category or place to look in.",
+                    user_action="Describe a specific kind of business and a place to search, "
+                    "or edit the audience in Settings.",
+                ),
+                data=[],
+            )
+
         found: list[DiscoveredBusiness] = []
+        errors: list[ProviderError] = []
         for term in request.search_terms:
             for location in request.locations:
                 query = places.build_query(term, location)
@@ -103,9 +127,22 @@ class LocalSearchDiscovery:
                     "discovery niche=%s region=%s query=%r",
                     request.niche_id, request.region, query,
                 )
-                for place in places.search(query, limit=request.limit):
-                    found.append(_from_place(place))
-        return found
+                result = places.search(query, limit=request.limit)
+                if result.ok:
+                    found.extend(_from_place(p) for p in result.data)
+                else:
+                    errors.append(result.error)  # type: ignore[arg-type]
+
+        if not found and errors:
+            # Every query that ran failed outright -- this is not a quiet
+            # region, it is a provider that never actually answered.
+            return ProviderResult.failure(
+                errors[0], data=[], metadata={"failed_queries": len(errors)}
+            )
+        return ProviderResult.success(
+            "osm", "discover_local", found,
+            metadata={"failed_queries": len(errors)} if errors else {},
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -140,8 +177,8 @@ class ApolloDiscovery:
         """
         return True
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
-        contacts = apollo.search(
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
+        result = apollo.search(
             titles=request.titles,
             locations=request.locations,
             industries=request.industries,
@@ -149,7 +186,13 @@ class ApolloDiscovery:
             limit=request.limit,
             csv_glob=request.csv_glob,
         )
-        return [_from_contact(contact) for contact in contacts]
+        if not result.ok:
+            return ProviderResult.failure(result.error, data=[], metadata=result.metadata)  # type: ignore[arg-type]
+        return ProviderResult.success(
+            "apollo", "discover_contacts",
+            [_from_contact(contact) for contact in result.data],
+            metadata=result.metadata,
+        )
 
 
 class CsvImportDiscovery:
@@ -176,7 +219,7 @@ class CsvImportDiscovery:
         """
         return True
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
         pattern = request.csv_glob or "*.csv"
         contacts = apollo.import_csvs(pattern)
         if not contacts:
@@ -186,7 +229,9 @@ class CsvImportDiscovery:
             )
         limit = request.limit
         rows = [_from_contact(contact) for contact in contacts]
-        return rows[:limit] if limit else rows
+        return ProviderResult.success(
+            "csv_import", "discover_contacts", rows[:limit] if limit else rows,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -196,12 +241,12 @@ class CsvImportDiscovery:
 
 class NoDiscovery:
     """
-    Finds nothing, on purpose.
+    What a niche gets when its capability has no usable provider at all.
 
-    What a niche gets when its capability has no usable provider. N1 reports
-    the empty result as a low-yield target, which a human sees on the batch
-    summary -- far better than a stack trace, and far better than a silently
-    successful batch that touched nobody.
+    This is a configuration fact, not a search that came up empty -- N1 must
+    not report it the same way it would report a real provider searching and
+    finding nothing, or a genuinely unreachable region looks identical to a
+    tenant who never finished setting discovery up.
     """
 
     def __init__(self, kind: str = "local_business", reason: str = "") -> None:
@@ -212,12 +257,23 @@ class NoDiscovery:
     def available(self) -> bool:
         return False
 
-    def find(self, request: DiscoveryRequest) -> list[DiscoveredBusiness]:
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
+        reason = self.reason or "not configured"
         log.warning(
-            "no discovery provider for niche=%s (%s); found nothing",
-            request.niche_id, self.reason or "not configured",
+            "no discovery provider for niche=%s (%s); nothing to search with",
+            request.niche_id, reason,
         )
-        return []
+        return ProviderResult.failure(
+            ProviderError(
+                ErrorCode.CONFIGURATION_ERROR,
+                provider="none",
+                operation="discover",
+                message=f"no usable {self.kind} discovery provider ({reason})",
+                user_message="No connected provider can search for this kind of audience yet.",
+                user_action="Connect a discovery provider in Settings for this audience type.",
+            ),
+            data=[],
+        )
 
 
 _ADAPTERS = {

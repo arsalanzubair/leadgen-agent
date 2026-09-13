@@ -10,7 +10,7 @@
  * available on Activity for anyone who wants it.
  */
 
-import { Check, Loader2, Minus, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Loader2, Minus, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Button, Card, Num } from "@/components/ui/primitives";
@@ -88,7 +88,29 @@ export function RunProgress({ run }: { run: AgentRun }) {
         })}
       </ol>
 
-      {finished ? (
+      {finished && run.leads_discovered === 0 && (run.discovery_errors ?? []).length ? (
+        // A provider that could not complete the search must never look like
+        // a search that ran and genuinely found nobody -- see DiscoveryError.
+        <div className="border-t border-border px-5 py-4">
+          <p className="flex items-start gap-2 text-body font-medium text-primary">
+            <CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" />
+            Search could not be completed
+          </p>
+          <ul className="mt-2 space-y-2">
+            {(run.discovery_errors ?? []).map((error, index) => (
+              <li key={index} className="text-meta text-secondary">
+                <span className="font-medium text-primary">{error.user_message}</span>
+                {error.user_action ? <span> {error.user_action}</span> : null}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button asChild variant="secondary">
+              <Link to="/settings">Check Connections</Link>
+            </Button>
+          </div>
+        </div>
+      ) : finished ? (
         <div className="border-t border-border px-5 py-4">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
             <Stat label="Found" value={run.leads_discovered} />
@@ -102,7 +124,11 @@ export function RunProgress({ run }: { run: AgentRun }) {
             ) : null}
           </div>
 
-          {run.low_yield_targets.length ? (
+          {run.leads_discovered === 0 && !run.low_yield_targets.length ? (
+            <p className="mt-3 text-micro text-secondary">
+              The search completed but found no matching businesses.
+            </p>
+          ) : run.low_yield_targets.length ? (
             <p className="mt-3 flex items-start gap-2 text-micro text-secondary">
               <TriangleAlert size={13} className="mt-0.5 shrink-0 text-warning" />
               <span>
