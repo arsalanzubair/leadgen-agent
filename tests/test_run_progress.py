@@ -16,7 +16,17 @@ from src import progress
 
 
 @pytest.fixture(autouse=True)
-def clean_registry():
+def clean_registry(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """
+    A registry that starts empty and writes nowhere real.
+
+    `start()` persists each record under config/tenants/<id>/, so without the
+    redirect these tests leave a directory behind for a workspace that does not
+    exist -- in the same folder the product reads its actual configuration from.
+    """
+    monkeypatch.setattr(
+        runs, "runs_path", lambda tenant_id: tmp_path / tenant_id / "runs.json"
+    )
     runs.__reset_for_tests()
     progress.install(None)
     yield

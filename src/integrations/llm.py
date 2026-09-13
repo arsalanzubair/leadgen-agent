@@ -78,6 +78,19 @@ class LLMResponse:
 # Provider availability
 # --------------------------------------------------------------------------- #
 
+#: The Gemini generation model, when GEMINI_MODEL says nothing.
+#:
+#: A named constant rather than a literal at each call site: the default was
+#: written out twice -- once where the client is built and once where a run
+#: reports which model answered -- so the two could drift and a run could
+#: report a model it had not used. Retiring a model is exactly the moment that
+#: would have happened.
+#:
+#: This is only the DEFAULT. `GEMINI_MODEL` overrides it, so a model retirement
+#: needs no code change: set the variable and restart.
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
+
 #: provider -> the environment variable that makes it usable. Ollama and mock
 #: are absent because neither needs one.
 KEY_VARS: dict[str, str] = {
@@ -156,7 +169,7 @@ def _build_client(provider: str, temperature_x100: int) -> Any:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
-            model=env("GEMINI_MODEL", "gemini-2.0-flash"),
+            model=env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
             temperature=temperature,
             google_api_key=env("GOOGLE_API_KEY"),
             max_retries=0,
@@ -206,7 +219,7 @@ def _build_client(provider: str, temperature_x100: int) -> Any:
 def model_name(provider: str) -> str:
     return {
         "groq": env("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        "gemini": env("GEMINI_MODEL", "gemini-2.0-flash"),
+        "gemini": env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         "openai": env("OPENAI_MODEL", "gpt-4o-mini"),
         "anthropic": env("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
         "deepseek": env("DEEPSEEK_MODEL", "deepseek-chat"),

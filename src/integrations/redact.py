@@ -27,7 +27,7 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # A bearer token in a quoted header dump.
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._-]{10,}"),
     # Anything else long enough to be a credential rather than a word. Model
-    # names ("gemini-2.0-flash") and node names are far shorter than this.
+    # names ("gemini-3.6-flash") and node names are far shorter than this.
     re.compile(r"\b[A-Za-z0-9_-]{32,}\b"),
 )
 

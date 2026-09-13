@@ -105,7 +105,7 @@ def test_gemini_carries_the_key_as_a_query_parameter():
         {"api_key": "AIzaKEY"},
         host="generativelanguage.googleapis.com",
         path="/v1beta/models",
-        json_body={"models": [{"name": "gemini-2.0-flash"}]},
+        json_body={"models": [{"name": "gemini-3.6-flash"}]},
     )
     assert result.ok
     assert request.url.params["key"] == "AIzaKEY"

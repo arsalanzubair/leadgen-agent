@@ -32,14 +32,14 @@ def test_a_key_in_a_query_string_goes_but_the_url_stays_readable():
     """
     text = (
         "gemini: 400 from https://generativelanguage.googleapis.com/v1beta/"
-        f"models/gemini-2.0-flash:generateContent?key={GOOGLE}"
+        f"models/gemini-3.6-flash:generateContent?key={GOOGLE}"
     )
     out = scrub(text)
     assert GOOGLE not in out
     assert "key=<redacted>" in out
     # Still says which provider, which endpoint and which model.
     assert "generativelanguage.googleapis.com" in out
-    assert "gemini-2.0-flash" in out
+    assert "gemini-3.6-flash" in out
 
 
 def test_a_bearer_token_goes_but_the_header_is_still_recognisable():
@@ -56,7 +56,7 @@ def test_the_diagnosis_is_left_intact():
     """
     for text in (
         "groq: no key configured (GROQ_API_KEY is unset)",
-        "gemini: 404 model gemini-2.0-flash is not found for API version v1beta",
+        "gemini: 404 model gemini-3.6-flash is not found for API version v1beta",
         "gemini: 429 RESOURCE_EXHAUSTED quota exceeded for generate_content_free_tier",
         "ollama: nothing listening on OLLAMA_BASE_URL",
         "gemini: 403 SERVICE_DISABLED Generative Language API has not been used",
@@ -67,7 +67,7 @@ def test_the_diagnosis_is_left_intact():
 def test_model_and_variable_names_are_not_mistaken_for_secrets():
     """The long-token rule must not fire on ordinary identifiers."""
     for word in (
-        "gemini-2.0-flash",
+        "gemini-3.6-flash",
         "llama-3.3-70b-versatile",
         "GOOGLE_SERVICE_ACCOUNT_FILE",
         "n5_5_suppression_gate",
