@@ -17,11 +17,10 @@ usually an account or usage lookup. Checking a key should not consume the
 allowance it is checking. A provider that needs no credentials gets a check
 that says so rather than a fake network call.
 
-NOT OFFERED: Google Places. It has no adapter in the capability layer and is
-excluded from the product, so asking for a key we would not use would be
-worse than not asking. An install with `GOOGLE_PLACES_API_KEY` already in its
-`.env` keeps working -- see `LocalSearchDiscovery` -- it just is not something
-this screen offers to set up.
+The one exception is Google Places: its API (New) has no separate "check my
+key" endpoint, so `_check_google_places` below makes the real search call
+with the smallest field mask Google bills for (Basic Data only, no rating or
+phone), rather than the richer mask the adapter itself asks for.
 """
 
 from __future__ import annotations
@@ -495,6 +494,39 @@ def _check_imap(values: dict[str, str]) -> TestResult:
         )
 
 
+def _check_google_places(values: dict[str, str]) -> TestResult:
+    """
+    A real Text Search call, with the cheapest field mask Google offers.
+
+    There is no free "validate this key" endpoint on Places API (New) -- every
+    call is billed. Asking for `places.id` only keeps this at Google's Basic
+    Data tier rather than the Pro tier the adapter's own search uses (rating,
+    phone, review count), so testing a key costs a fraction of a real search.
+    """
+    def ok(response: httpx.Response) -> TestResult:
+        try:
+            found = len(response.json().get("places", []))
+        except json.JSONDecodeError:
+            found = 0
+        return TestResult(
+            True, "Connected.",
+            "Test search returned a result." if found else
+            "Test search returned nothing, but the key was accepted.",
+        )
+
+    return _http_check(
+        "POST",
+        "https://places.googleapis.com/v1/places:searchText",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": values["api_key"].strip(),
+            "X-Goog-FieldMask": "places.id",
+        },
+        json_body={"textQuery": "coffee", "maxResultCount": 1},
+        on_ok=ok,
+    )
+
+
 def _check_ollama(values: dict[str, str]) -> TestResult:
     """A model running on this machine. Lists what is installed."""
     base = (values.get("base_url", "").strip() or "http://localhost:11434").rstrip("/")
@@ -823,6 +855,7 @@ CHECKS: dict[str, Callable[[dict[str, str]], TestResult]] = {
     "ollama": _check_ollama,
     "apollo": _check_apollo,
     "hunter": _check_hunter,
+    "google_places": _check_google_places,
     "gmail_smtp": _check_gmail,
     "brevo": _check_brevo,
     "imap": _check_imap,

@@ -221,6 +221,26 @@ def _search_nominatim(query: str, limit: int) -> list[PlaceResult]:
     return results
 
 
+def search_osm_only(query: str, limit: int = 20) -> ProviderResult[list[PlaceResult]]:
+    """
+    OpenStreetMap only, regardless of whether a Google Places key is present.
+
+    Used by the free `osm` discovery provider now that Google Maps is its own
+    selectable, connectable provider (`google_places`) rather than a hidden
+    preference this one used to apply on its own whenever a key happened to be
+    in the environment. `search()` below still does that combined,
+    Google-preferred-with-OSM-fallback behaviour -- it is what the
+    `google_places` provider uses, so choosing Google Maps still degrades to
+    OpenStreetMap on a Google-side failure instead of stopping outright.
+    """
+    try:
+        results = call_with_retries(_search_nominatim, query, limit)
+    except ProviderError as exc:
+        log.error("OpenStreetMap discovery failed for %r: %s", query, exc)
+        return ProviderResult.failure(exc, data=[])
+    return ProviderResult.success("osm", _NOMINATIM_OP, results)
+
+
 def search(query: str, limit: int = 20) -> ProviderResult[list[PlaceResult]]:
     """
     Search for local businesses, preferring Google Places and falling back to

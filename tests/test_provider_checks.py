@@ -220,6 +220,46 @@ def test_anymail_finder_checks_the_account_rather_than_a_search():
     assert "100 credits" in result.detail
 
 
+# --------------------------------------------------------------------------- #
+# Google Maps -- the one check that has to make a real, billed search
+# --------------------------------------------------------------------------- #
+
+def test_google_maps_check_asks_for_the_cheapest_field_mask_only():
+    """
+    Places API (New) has no free "is this key valid" endpoint, so the check
+    makes a real Text Search call -- but with `places.id` only, Google's
+    cheapest (Basic Data) billing tier, not the richer mask
+    (`src.integrations.places.GOOGLE_FIELD_MASK`) the real adapter asks for.
+    Asking for more here would make testing a key cost more than using it.
+    """
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.route(
+            method="POST", host="places.googleapis.com", path="/v1/places:searchText",
+        ).mock(return_value=httpx.Response(200, json={"places": [{"id": "abc"}]}))
+        result = run_check("google_places", {"api_key": "  AIzaFake  "})
+
+    request = route.calls.last.request
+    assert result.ok
+    assert request.headers["x-goog-api-key"] == "AIzaFake"
+    assert request.headers["x-goog-fieldmask"] == "places.id"
+    from src.integrations.places import GOOGLE_FIELD_MASK
+
+    assert request.headers["x-goog-fieldmask"] != GOOGLE_FIELD_MASK
+
+
+def test_google_maps_check_reports_a_rejected_key():
+    with respx.mock(assert_all_called=True) as mock:
+        mock.route(
+            method="POST", host="places.googleapis.com", path="/v1/places:searchText",
+        ).mock(
+            return_value=httpx.Response(
+                403, json={"error": {"message": "API key not valid"}},
+            )
+        )
+        result = run_check("google_places", {"api_key": "wrong"})
+    assert not result.ok
+
+
 def test_brevo_uses_the_api_key_header_and_reports_the_sender():
     result, request = rest_call(
         "brevo",

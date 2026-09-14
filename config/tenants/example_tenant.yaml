@@ -400,6 +400,10 @@ providers:
     primary: ollama
 
   # Local businesses by area. Free, no key, rate limited to 1 search/second.
+  # `google_places` (Google Maps / Google Business Profile listings -- a
+  # verified website, phone, rating and review count) is also selectable once
+  # a Google Places key is connected in Settings; set `fallback: osm` to drop
+  # back to the free option automatically if no key is connected.
   discovery_local:
     primary: osm
 

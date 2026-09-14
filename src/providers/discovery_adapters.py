@@ -1,15 +1,21 @@
 """
 discovery_adapters.py -- where leads come from, behind one interface.
 
-Three real sources today, split across the two discovery capabilities because
+Four real sources today, split across the two discovery capabilities because
 they answer genuinely different questions:
 
-  discovery_local   osm          "dental clinics in Manchester"
-  discovery_b2b     apollo       "Heads of Support at SaaS firms", or
-                                  "SaaS companies in the UK" with no title
-                                  named, or "businesses in Germany" with
-                                  neither a title nor a map category
-  discovery_b2b     csv_import   "the export I already have on disk"
+  discovery_local   osm             "dental clinics in Manchester", free,
+                                     no key, thinner data
+  discovery_local   google_places   the same search against Google Maps /
+                                     Google Business Profile listings --
+                                     a website, phone, rating and review
+                                     count where OpenStreetMap usually has
+                                     none, for a workspace that connects a key
+  discovery_b2b     apollo          "Heads of Support at SaaS firms", or
+                                     "SaaS companies in the UK" with no title
+                                     named, or "businesses in Germany" with
+                                     neither a title nor a map category
+  discovery_b2b     csv_import      "the export I already have on disk"
 
 `ApolloDiscovery` itself picks people-search vs organization-search per
 request (job titles present or not) -- see its docstring below. That is the
@@ -20,8 +26,8 @@ answers it.
 
 Each adapter calls the module function it wraps and translates that vendor's
 result type into `DiscoveredBusiness`. The translation is the whole job: it is
-what lets N1 stop having one code path per vendor, and it is why adding a
-fourth source does not touch N1 at all.
+what lets N1 stop having one code path per vendor, and it is why adding a new
+source does not touch N1 at all.
 
 The `source` string that each vendor sets on its own results is carried
 through unchanged. It ends up on the lead and in the CRM row, and it is the
@@ -93,22 +99,81 @@ def _from_organization(org: apollo.OrganizationResult) -> DiscoveredBusiness:
 # --------------------------------------------------------------------------- #
 
 
+def _run_local_search(
+    request: DiscoveryRequest,
+    *,
+    search_fn,
+    provider_id: str,
+) -> ProviderResult[list[DiscoveredBusiness]]:
+    """
+    Shared by every local-business adapter: build one query per
+    (search_term, location) pair, run it through whichever vendor function the
+    caller passes, and fold the results into `DiscoveredBusiness`. The only
+    thing that differs between OpenStreetMap and Google Maps is which function
+    answers each query and which id gets recorded -- everything else, right
+    down to the wording of the "nothing to search on" error, is identical.
+    """
+    # No category or nowhere to look is not "zero businesses" -- it is
+    # nothing having been asked. Looping over an empty list here used to
+    # produce a silent, unlogged `[]` indistinguishable from a real search
+    # that came up empty.
+    if not request.search_terms or not request.locations:
+        return ProviderResult.failure(
+            ProviderError(
+                ErrorCode.CONFIGURATION_ERROR,
+                provider=provider_id,
+                operation="discover_local",
+                message=(
+                    f"niche={request.niche_id!r} region={request.region!r}: "
+                    f"search_terms={request.search_terms!r} "
+                    f"locations={request.locations!r}"
+                ),
+                user_message="This audience has no searchable category or place to look in.",
+                user_action="Describe a specific kind of business and a place to search, "
+                "or edit the audience in Settings.",
+            ),
+            data=[],
+        )
+
+    found: list[DiscoveredBusiness] = []
+    errors: list[ProviderError] = []
+    for term in request.search_terms:
+        for location in request.locations:
+            query = places.build_query(term, location)
+            log.info(
+                "discovery niche=%s region=%s query=%r provider=%s",
+                request.niche_id, request.region, query, provider_id,
+            )
+            result = search_fn(query, limit=request.limit)
+            if result.ok:
+                found.extend(_from_place(p) for p in result.data)
+            else:
+                errors.append(result.error)  # type: ignore[arg-type]
+
+    if not found and errors:
+        # Every query that ran failed outright -- this is not a quiet
+        # region, it is a provider that never actually answered.
+        return ProviderResult.failure(
+            errors[0], data=[], metadata={"failed_queries": len(errors)}
+        )
+    return ProviderResult.success(
+        provider_id, "discover_local", found,
+        metadata={"failed_queries": len(errors)} if errors else {},
+    )
+
+
 class LocalSearchDiscovery:
     """
-    Local businesses by area, through `integrations.places`.
+    Local businesses by area, through `integrations.places`'s OpenStreetMap
+    path only.
 
     Needs no credentials: OpenStreetMap's Nominatim is free, and the module it
     wraps already enforces that service's hard one-request-per-second policy
-    globally rather than per call.
-
-    One honest wrinkle. `places.search()` retains a legacy path that prefers
-    Google Places when a `GOOGLE_PLACES_API_KEY` happens to be in the
-    environment. Google Places is deliberately NOT in the registry -- it cannot
-    be connected through Connections and nothing in the product offers it -- so
-    the only way that path runs is if somebody set that variable in `.env`
-    themselves. It is left in place because removing it would break those
-    installs for no gain, and the source recorded on the lead says which one
-    actually answered.
+    globally rather than per call. This adapter no longer looks for a Google
+    Places key on its own -- Google Maps is its own selectable provider,
+    `GoogleMapsDiscovery` below, and a workspace picks it explicitly (with
+    `osm` as an optional `fallback`) rather than this one silently upgrading
+    itself whenever a key happens to be in the environment.
     """
 
     id = "osm"
@@ -118,53 +183,36 @@ class LocalSearchDiscovery:
         return True
 
     def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
-        # No category or nowhere to look is not "zero businesses" -- it is
-        # nothing having been asked. Looping over an empty list here used to
-        # produce a silent, unlogged `[]` indistinguishable from a real search
-        # that came up empty.
-        if not request.search_terms or not request.locations:
-            return ProviderResult.failure(
-                ProviderError(
-                    ErrorCode.CONFIGURATION_ERROR,
-                    provider="osm",
-                    operation="discover_local",
-                    message=(
-                        f"niche={request.niche_id!r} region={request.region!r}: "
-                        f"search_terms={request.search_terms!r} "
-                        f"locations={request.locations!r}"
-                    ),
-                    user_message="This audience has no searchable category or place to look in.",
-                    user_action="Describe a specific kind of business and a place to search, "
-                    "or edit the audience in Settings.",
-                ),
-                data=[],
-            )
+        return _run_local_search(request, search_fn=places.search_osm_only, provider_id="osm")
 
-        found: list[DiscoveredBusiness] = []
-        errors: list[ProviderError] = []
-        for term in request.search_terms:
-            for location in request.locations:
-                query = places.build_query(term, location)
-                log.info(
-                    "discovery niche=%s region=%s query=%r",
-                    request.niche_id, request.region, query,
-                )
-                result = places.search(query, limit=request.limit)
-                if result.ok:
-                    found.extend(_from_place(p) for p in result.data)
-                else:
-                    errors.append(result.error)  # type: ignore[arg-type]
 
-        if not found and errors:
-            # Every query that ran failed outright -- this is not a quiet
-            # region, it is a provider that never actually answered.
-            return ProviderResult.failure(
-                errors[0], data=[], metadata={"failed_queries": len(errors)}
-            )
-        return ProviderResult.success(
-            "osm", "discover_local", found,
-            metadata={"failed_queries": len(errors)} if errors else {},
-        )
+class GoogleMapsDiscovery:
+    """
+    Local businesses from Google Maps / Google Business Profile listings, via
+    `integrations.places`'s Google Places (New) Text Search -- a verified
+    website, phone number, rating and review count where OpenStreetMap
+    usually has none.
+
+    Uses `places.search()`, which prefers Google and degrades to OpenStreetMap
+    on a Google-side failure (quota spent, a rejected key discovered mid-batch,
+    an outage) rather than stopping discovery outright; the per-row `source`
+    still says which one actually answered, so choosing Google Maps never
+    silently mislabels an OSM result as Google's. `available()` reports
+    whether a key is configured at all, which is what lets a workspace name
+    `osm` as this provider's `fallback` and have the resolver switch to it
+    automatically when no key has ever been connected -- a different case from
+    a connected key failing mid-search, which `places.search()` handles
+    itself.
+    """
+
+    id = "google_places"
+    kind = "local_business"
+
+    def available(self) -> bool:
+        return places.has_google_key()
+
+    def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
+        return _run_local_search(request, search_fn=places.search, provider_id="google_places")
 
 
 # --------------------------------------------------------------------------- #
@@ -353,6 +401,7 @@ class NoDiscovery:
 
 _ADAPTERS = {
     "osm": LocalSearchDiscovery,
+    "google_places": GoogleMapsDiscovery,
     "apollo": ApolloDiscovery,
     "csv_import": CsvImportDiscovery,
 }

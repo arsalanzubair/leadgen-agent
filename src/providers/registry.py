@@ -350,6 +350,30 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         factory="src.providers.discovery_adapters:build",
         essential=True,
     ),
+    ProviderSpec(
+        id="google_places",
+        display_name="Google Maps",
+        capability=Capability.DISCOVERY_LOCAL,
+        credential_type=CredentialType.API_KEY,
+        purpose="Finds businesses from Google Maps / Google Business Profile "
+        "listings -- a verified website, phone number, rating and review "
+        "count where OpenStreetMap usually has none",
+        free_tier="A monthly free credit from Google, then billed per request; "
+        "this product tracks a monthly request cap so it cannot be blown "
+        "through silently",
+        docs_label="Create a key at console.cloud.google.com",
+        docs_url="https://console.cloud.google.com/google/maps-apis/credentials",
+        connection_fields=(
+            ConnectionField(
+                name="api_key",
+                label="Google Places API key",
+                placeholder="AIza...",
+                hint="Enable \"Places API (New)\" for this key in the Google Cloud console.",
+            ),
+        ),
+        env_vars={"api_key": "GOOGLE_PLACES_API_KEY"},
+        factory="src.providers.discovery_adapters:build",
+    ),
     _custom(
         Capability.DISCOVERY_LOCAL,
         "Your own source of local businesses",

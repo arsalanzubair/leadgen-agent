@@ -241,18 +241,29 @@ def test_a_discovery_failure_is_reported_not_swallowed(config, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 def test_local_discovery_uses_places(config, monkeypatch):
+    """
+    example_tenant's local_dental niche is served by `osm` by default, which
+    now calls `places.search_osm_only` -- never `places.search` (the
+    Google-preferring combined path), since that one belongs to the separate
+    `google_places` provider tested below.
+    """
     monkeypatch.setattr(
-        places, "search",
+        places, "search_osm_only",
         lambda query, limit=20: ProviderResult.success(
             "osm", "discover_local",
             [
                 places.PlaceResult(
                     name="Bright Smile", address="Manchester", website="https://bs.co.uk",
-                    phone="0161 555 0100", rating=4.6, review_count=34, source="google_places",
+                    phone="0161 555 0100", rating=4.6, review_count=34, source="osm",
                 )
             ],
         ),
     )
+
+    def places_search_must_not_run(*args, **kwargs):
+        raise AssertionError("the osm provider must not call the Google-preferring search()")
+
+    monkeypatch.setattr(places, "search", places_search_must_not_run)
     from src.nodes.n1_discovery import discover_for_target
 
     target = BatchTarget(niche_id="local_dental", region="UK", language="en")
@@ -260,13 +271,13 @@ def test_local_discovery_uses_places(config, monkeypatch):
     assert error is None
     assert leads
     assert leads[0]["company_name"] == "Bright Smile"
-    assert leads[0]["source"] == "google_places"
+    assert leads[0]["source"] == "osm"
     assert any("34 reviews" in s for s in leads[0]["signals"])
 
 
 def test_permanently_closed_places_are_dropped(config, monkeypatch):
     monkeypatch.setattr(
-        places, "search",
+        places, "search_osm_only",
         lambda query, limit=20: ProviderResult.success(
             "osm", "discover_local",
             [places.PlaceResult(name="Gone", business_status="CLOSED_PERMANENTLY")],
@@ -278,6 +289,66 @@ def test_permanently_closed_places_are_dropped(config, monkeypatch):
     leads, error = discover_for_target(config, target)
     assert error is None
     assert leads == []
+
+
+def test_google_maps_provider_uses_the_combined_places_search(config, monkeypatch):
+    """
+    A workspace that has connected Google Places and chosen it for
+    discovery_local gets richer, Google-sourced leads via `places.search()`
+    (which itself still degrades to OpenStreetMap on a Google-side failure).
+    """
+    config.raw["providers"] = dict(config.raw.get("providers") or {})
+    config.raw["providers"]["discovery_local"] = {"primary": "google_places"}
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "fake-key")
+
+    def fake_search(query, limit=20):
+        return ProviderResult.success(
+            "google_places", "discover_local",
+            [
+                places.PlaceResult(
+                    name="Riverside Dental", address="Manchester",
+                    website="https://riverside-dental.example",
+                    rating=4.8, review_count=112, source="google_places",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(places, "search", fake_search)
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="local_dental", region="UK", language="en")
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads
+    assert leads[0]["company_name"] == "Riverside Dental"
+    assert leads[0]["source"] == "google_places"
+
+
+def test_google_maps_without_a_key_falls_back_to_osm(config, monkeypatch):
+    """
+    The generic primary/fallback resolver, not a hidden preference inside an
+    adapter: a workspace that names `google_places` as primary and `osm` as
+    fallback, but has never connected a key, gets OSM automatically -- the
+    same mechanism every other capability's `fallback` field already uses.
+    """
+    config.raw["providers"] = dict(config.raw.get("providers") or {})
+    config.raw["providers"]["discovery_local"] = {"primary": "google_places", "fallback": "osm"}
+    monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
+
+    monkeypatch.setattr(
+        places, "search_osm_only",
+        lambda query, limit=20: ProviderResult.success(
+            "osm", "discover_local",
+            [places.PlaceResult(name="Bright Smile", source="osm")],
+        ),
+    )
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="local_dental", region="UK", language="en")
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads
+    assert leads[0]["source"] == "osm"
 
 
 def test_b2b_discovery_uses_apollo(config, monkeypatch):

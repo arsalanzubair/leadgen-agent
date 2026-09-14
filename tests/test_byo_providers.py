@@ -451,6 +451,7 @@ def test_every_provider_that_needs_a_key_can_be_tested_before_it_is_saved():
 def test_the_new_providers_are_selectable_for_their_capability():
     expected = {
         registry.Capability.LLM: {"openai", "anthropic", "deepseek"},
+        registry.Capability.DISCOVERY_LOCAL: {"google_places"},
         registry.Capability.ENRICHMENT: {"anymail_finder"},
         registry.Capability.EMAIL_SENDER: {"smtp"},
         registry.Capability.CRM: {"hubspot", "pipedrive"},

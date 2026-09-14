@@ -47,7 +47,7 @@ const SECTIONS: { title: string; hint: string; providers: string[] }[] = [
   {
     title: "Lead Discovery",
     hint: "Finds the businesses in the first place.",
-    providers: ["apollo", "osm", "csv_import", "custom_discovery_local"],
+    providers: ["apollo", "osm", "google_places", "csv_import", "custom_discovery_local"],
   },
   {
     title: "AI / LLM",
