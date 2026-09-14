@@ -199,10 +199,14 @@ def discover_for_target(
     No dedupe yet -- `discover()` does that across the whole batch, because a
     duplicate can only be recognised against the other targets.
 
-    There is no branch on which vendor to use. The niche's `type` decides which
+    Almost no branch on which vendor to use: the niche's `type` decides which
     capability applies and the resolver decides who serves it, so a workspace
     that switches from a contact database to its own CSV exports changes one
-    line of YAML and this function does not notice.
+    line of YAML and this function does not notice. The one exception is a
+    local_business niche with no map category -- a search a map/places
+    provider cannot run at all -- which is routed to the b2b capability's
+    provider instead, for a company-level search by location. See
+    `broad_company_search` below.
 
     Returns `(leads, error)`. `error` is `None` for an ordinary search --
     including one that genuinely found nobody -- and is the normalized
@@ -221,11 +225,25 @@ def discover_for_target(
         return load_fixture_leads(config.tenant_id, [target]), None
 
     kind = str(niche.get("type") or "local_business")
-    provider = discovery_for(config, niche, tenant_id=config.tenant_id)
+    search_terms = list(discovery.get("search_terms") or [])
+
+    # A local_business niche with no map category ("find businesses in
+    # Germany") has nothing an OSM/Places text search can run -- those
+    # providers search a category within a place, not a place on its own.
+    # The honest broadest thing this workspace can do is a company-level
+    # search by location, which is what discovery_b2b's provider (Apollo, or
+    # a CSV export) actually supports with no title or category at all. This
+    # is provider selection driven by what the request names, not by the
+    # niche's declared type: the niche is still "local_business" as the user
+    # wrote it, only this particular search is broad enough to need the other
+    # capability.
+    broad_company_search = kind == "local_business" and not search_terms and locations
+    effective_kind = "b2b" if broad_company_search else kind
+    provider = discovery_for(config, niche, niche_type=effective_kind, tenant_id=config.tenant_id)
 
     request = DiscoveryRequest(
-        kind=kind,
-        search_terms=list(discovery.get("search_terms") or []),
+        kind=effective_kind,
+        search_terms=search_terms,
         locations=list(locations),
         titles=list(discovery.get("titles") or []),
         industries=list(discovery.get("industries") or []),
@@ -246,7 +264,7 @@ def discover_for_target(
             # A permanently closed business is not a lead. Dropped here rather
             # than at qualification so it never costs a model call.
             continue
-        leads.append(_to_lead(found, target, config.tenant_id, dry_run, kind))
+        leads.append(_to_lead(found, target, config.tenant_id, dry_run, effective_kind))
 
     log.info(
         "discovery tenant=%s niche=%s region=%s provider=%s status=%s -> %d",

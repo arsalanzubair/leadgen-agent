@@ -252,25 +252,51 @@ def test_duplicate_niche_id_is_rejected(tmp_path, monkeypatch, example_raw):
         load_tenant_config(EXAMPLE)
 
 
-def test_b2b_niche_without_titles_is_rejected(tmp_path, monkeypatch, example_raw):
+def test_b2b_niche_without_titles_is_accepted_as_a_broad_company_search(
+    tmp_path, monkeypatch, example_raw
+):
+    """
+    "SaaS companies in the UK" names an industry and a place but no job title
+    at all -- that is a company-level search (organization search, not
+    people search), not an incomplete niche. A title is no longer required;
+    a place still is.
+    """
     raw = copy.deepcopy(example_raw)
     for niche in raw["niches"]:
         if niche["type"] == "b2b":
             niche["discovery"].pop("titles")
     write_tenant(tmp_path, monkeypatch, raw, EXAMPLE)
-    with pytest.raises(ConfigError, match="titles"):
-        load_tenant_config(EXAMPLE)
+    load_tenant_config(EXAMPLE)  # must not raise
 
 
-def test_local_niche_without_search_terms_is_rejected(
+def test_local_niche_without_search_terms_is_accepted_as_a_broad_search(
     tmp_path, monkeypatch, example_raw
 ):
+    """
+    "Find businesses in Germany without AI-powered customer support" names a
+    real place and a real qualifying trait but no map category at all --
+    that is a legitimate broad search by location (n1_discovery routes it to
+    company-level discovery), not an unrepresentable configuration.
+    """
     raw = copy.deepcopy(example_raw)
     for niche in raw["niches"]:
         if niche["type"] == "local_business":
             niche["discovery"].pop("search_terms")
     write_tenant(tmp_path, monkeypatch, raw, EXAMPLE)
-    with pytest.raises(ConfigError, match="search_terms"):
+    load_tenant_config(EXAMPLE)  # must not raise
+
+
+def test_niche_without_any_locations_is_still_rejected(tmp_path, monkeypatch, example_raw):
+    """
+    A place to search is the one thing a broad search still cannot do
+    without. Dropping every location for a niche must still halt config load,
+    even though a category is now optional.
+    """
+    raw = copy.deepcopy(example_raw)
+    for niche in raw["niches"]:
+        niche["discovery"]["locations"] = {}
+    write_tenant(tmp_path, monkeypatch, raw, EXAMPLE)
+    with pytest.raises(ConfigError, match="locations"):
         load_tenant_config(EXAMPLE)
 
 

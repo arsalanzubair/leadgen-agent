@@ -122,6 +122,9 @@ export function HomePage() {
                   : "Search finished"}
             </h1>
             <p className="mt-1 truncate text-body text-tertiary">{run.prompt}</p>
+            {run.interpretation ? (
+              <p className="mt-1 text-meta text-secondary">{run.interpretation}</p>
+            ) : null}
           </div>
           <Button
             variant="secondary"

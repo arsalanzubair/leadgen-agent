@@ -291,6 +291,11 @@ def start(tenant_id: str, config: dict[str, Any], prompt: str) -> dict[str, Any]
         "archived": [],
         "stages": stages,
         "prompt": prompt,
+        # What the AI step understood, one sentence, plain language -- carried
+        # straight through from `POST /api/runs/parse` so the run that actually
+        # executes shows the same reading of the request, not a second
+        # explanation invented after the fact.
+        "interpretation": str(config.get("interpretation") or ""),
         "config": config,
         "leads": [],
         "error": "",

@@ -104,6 +104,13 @@ export interface AgentRun {
   stages: StageProgress[];
   /** What the run was asked to do, in the user's own words. */
   prompt: string;
+  /**
+   * One plain-language sentence saying what the AI step understood from the
+   * prompt, carried straight from the parse step. Optional because a run
+   * record written before this field existed has none, and because a run
+   * can be started without ever calling parse.
+   */
+  interpretation?: string;
   config: RunConfig;
   /** Why it stopped, when it stopped badly. Empty on a run that finished. */
   error?: string;

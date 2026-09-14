@@ -303,6 +303,133 @@ def test_b2b_discovery_uses_apollo(config, monkeypatch):
     assert any("decision-maker" in s for s in leads[0]["signals"])
 
 
+def test_local_business_niche_with_no_search_terms_routes_to_company_search(
+    config, monkeypatch
+):
+    """
+    The "Germany" case at the discovery layer: "find businesses in Germany"
+    names a real place and no map category. OSM/Places search a category
+    within a place, not a place on its own, so there is nothing for them to
+    run -- `discover_for_target` must route this to company-level discovery
+    (whichever provider the tenant has configured for discovery_b2b) instead
+    of asking a map provider a question it cannot answer.
+    """
+    config.raw["niches"].append({
+        "id": "broad_germany",
+        "label": "Businesses in Germany",
+        "type": "local_business",
+        "channel_default": "email",
+        "discovery": {
+            "search_terms": [],
+            "locations": {"EU": ["Germany"]},
+            "max_results_per_location": 20,
+            "min_expected_leads": 5,
+        },
+        "icp": {"description": "x", "good_signals": ["y"]},
+    })
+
+    def places_must_not_run(*args, **kwargs):
+        raise AssertionError("a map search must not run for a broad company search")
+
+    monkeypatch.setattr(places, "search", places_must_not_run)
+    monkeypatch.setattr(
+        apollo, "search_organizations",
+        lambda **kwargs: ProviderResult.success(
+            "apollo", "discover_companies",
+            [
+                apollo.OrganizationResult(
+                    company_name="Musterfirma GmbH",
+                    website="https://musterfirma.example",
+                    industry="retail", location="Berlin, Germany", source="apollo",
+                )
+            ],
+        ),
+    )
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="broad_germany", region="EU", language="en")
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads
+    assert leads[0]["company_name"] == "Musterfirma GmbH"
+    assert leads[0]["source"] == "apollo"
+
+
+def test_b2b_niche_with_no_titles_uses_organization_search_not_people_search(
+    config, monkeypatch
+):
+    """
+    "SaaS companies in the UK" -- a real industry keyword, no job title.
+    `ApolloDiscovery` must call `search_organizations`, never `search`
+    (people), when the request names no titles.
+    """
+    config.raw["niches"].append({
+        "id": "broad_saas",
+        "label": "SaaS companies",
+        "type": "b2b",
+        "channel_default": "linkedin",
+        "discovery": {
+            "search_terms": ["SaaS"],
+            "titles": [],
+            "locations": {"UK": ["United Kingdom"]},
+            "max_results_per_location": 20,
+            "min_expected_leads": 5,
+        },
+        "icp": {"description": "x", "good_signals": ["y"]},
+    })
+
+    def people_search_must_not_run(**kwargs):
+        raise AssertionError("a people search must not run when no titles were given")
+
+    monkeypatch.setattr(apollo, "search", people_search_must_not_run)
+    monkeypatch.setattr(
+        apollo, "search_organizations",
+        lambda **kwargs: ProviderResult.success(
+            "apollo", "discover_companies",
+            [apollo.OrganizationResult(company_name="Nordwind SaaS", industry="SaaS", source="apollo")],
+        ),
+    )
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="broad_saas", region="UK", language="en")
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads[0]["company_name"] == "Nordwind SaaS"
+
+
+def test_b2b_niche_with_nothing_at_all_is_a_configuration_error_not_a_global_search(
+    config, monkeypatch
+):
+    """
+    No titles, no search terms, no industries and no locations for this
+    region -- there is nothing here to search on. `ApolloDiscovery` must
+    refuse rather than fire an unfiltered organization search (a real credit
+    spent answering a question nobody asked) or a CSV dump of every company
+    on disk.
+    """
+    config.raw["niches"].append({
+        "id": "empty_b2b",
+        "label": "Nothing to search",
+        "type": "b2b",
+        "channel_default": "linkedin",
+        "discovery": {"locations": {"UK": []}, "min_expected_leads": 5},
+        "icp": {"description": "x", "good_signals": ["y"]},
+    })
+
+    def must_not_run(**kwargs):
+        raise AssertionError("Apollo must not be called with nothing to search on")
+
+    monkeypatch.setattr(apollo, "search", must_not_run)
+    monkeypatch.setattr(apollo, "search_organizations", must_not_run)
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="empty_b2b", region="UK", language="en")
+    leads, error = discover_for_target(config, target)
+    assert leads == []
+    assert error is not None
+    assert error.code.value == "configuration_error"
+
+
 def test_apollo_csv_import_handles_sales_navigator_headers(tmp_path, monkeypatch):
     csv_path = tmp_path / "b2b_saas_ops_export.csv"
     csv_path.write_text(

@@ -62,24 +62,24 @@ def parse_request(body: ParseRequest) -> dict[str, Any]:
     # description produces the same understanding wherever it is typed.
     draft = draft_niche(DraftRequest(description=prompt))
 
-    # A niche with nothing to search a map or a contact database for will
-    # start a real run and discover exactly nobody, every time -- silently,
-    # because that is a request with no discoverable category rather than a
-    # provider failure. Catching it here, before anything is saved, is what
-    # turns that into an actionable message instead of a search that always
-    # finds "0 businesses".
-    discoverable = (
-        draft["search_terms"] if draft["kind"] == "local_business" else draft["titles"]
-    )
-    if not discoverable:
+    # A request needs SOMETHING to search on -- a place, or a specific
+    # category/role -- but not both. "Find businesses in Germany without
+    # AI-powered customer support" names a real place and no category at all;
+    # that is a legitimate broad search by location, not an incomplete
+    # request, and it must be accepted rather than rejected for missing a
+    # business type. What genuinely cannot run is a request with neither: no
+    # place to look and nothing to look for names it either, e.g. "find good
+    # leads". That is the only case caught here, before anything is saved.
+    has_location = bool(draft.get("locations"))
+    has_category = bool(draft.get("search_terms")) or bool(draft.get("titles"))
+    if not has_location and not has_category:
         raise HTTPException(
             422,
             detail=(
-                "That describes who to contact once found, not what kind of "
-                "business or role to search for. Add a specific type of "
-                "business, trade, or job title -- for example \"dental "
-                "clinics\" or \"Heads of Customer Support\" -- and describe "
-                "the other condition separately."
+                "Add a place to search -- a city, country or region -- or a "
+                "specific type of business, trade, or job title. For example "
+                "\"Germany\", \"dental clinics\", or \"Heads of Customer "
+                "Support\"."
             ),
         )
 
@@ -148,16 +148,14 @@ def start_run(body: StartRequest) -> dict[str, Any]:
                 detail="That audience is not set up yet. Describe who you want "
                 "to find and start the search again.",
             )
-        discoverable = (
-            draft.get("search_terms") if draft.get("kind") == "local_business"
-            else draft.get("titles")
-        )
-        if not discoverable:
+        has_location = bool(draft.get("locations"))
+        has_category = bool(draft.get("search_terms")) or bool(draft.get("titles"))
+        if not has_location and not has_category:
             raise HTTPException(
                 422,
-                detail="That audience has no specific business type, trade or "
-                "job title to search for. Describe who to search for and start "
-                "the search again.",
+                detail="That audience has no place to search and no specific "
+                "business type, trade or job title. Describe a place or a "
+                "category and start the search again.",
             )
         payload = {k: v for k, v in draft.items() if k != "interpretation"}
         payload["id"] = missing[0]

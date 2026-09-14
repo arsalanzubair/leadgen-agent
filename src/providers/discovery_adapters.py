@@ -5,8 +5,18 @@ Three real sources today, split across the two discovery capabilities because
 they answer genuinely different questions:
 
   discovery_local   osm          "dental clinics in Manchester"
-  discovery_b2b     apollo       "Heads of Support at 20-300 person SaaS firms"
+  discovery_b2b     apollo       "Heads of Support at SaaS firms", or
+                                  "SaaS companies in the UK" with no title
+                                  named, or "businesses in Germany" with
+                                  neither a title nor a map category
   discovery_b2b     csv_import   "the export I already have on disk"
+
+`ApolloDiscovery` itself picks people-search vs organization-search per
+request (job titles present or not) -- see its docstring below. That is the
+one place a request with no map category and no job title still reaches a
+real search instead of failing: `n1_discovery` routes such a request to this
+capability at all, and this adapter decides which of Apollo's two endpoints
+answers it.
 
 Each adapter calls the module function it wraps and translates that vendor's
 result type into `DiscoveredBusiness`. The translation is the whole job: it is
@@ -63,6 +73,18 @@ def _from_contact(contact: apollo.ContactResult) -> DiscoveredBusiness:
         industry=contact.industry,
         employee_count=contact.employee_count,
         source=contact.source,
+    )
+
+
+def _from_organization(org: apollo.OrganizationResult) -> DiscoveredBusiness:
+    return DiscoveredBusiness(
+        company_name=org.company_name,
+        website=org.website,
+        industry=org.industry,
+        location=org.location,
+        linkedin_url=org.linkedin_url,
+        employee_count=org.employee_count,
+        source=org.source,
     )
 
 
@@ -152,13 +174,26 @@ class LocalSearchDiscovery:
 
 class ApolloDiscovery:
     """
-    People by job title, through `integrations.apollo`.
+    People by job title, or companies by location/industry, through
+    `integrations.apollo` -- routed by what the request actually names rather
+    than by the niche's `type`.
 
-    `apollo.search()` is additive rather than exclusive: when the API returns
-    fewer than asked for and a CSV glob is set, it tops up from the import
-    folder. That behaviour is kept -- an empty API result with usable exports
-    sitting on disk should still produce a batch -- which does mean this
-    adapter can return rows sourced from CSV. The per-row `source` says so.
+    A request with job titles is a people search: somebody wants a named
+    contact in a specific role. A request with none -- "SaaS companies in the
+    UK", or nothing more specific than a location at all, "businesses in
+    Germany" -- names no role to look a contact up by, so it is a
+    company-level search instead. Forcing the second case through the people
+    endpoint with `person_titles` empty would ask a contact database a
+    question it cannot answer; Apollo's own organization search is the
+    correct tool, and this is where that choice is made, per request, not
+    per niche.
+
+    Both `apollo.search()` and `apollo.search_organizations()` are additive
+    rather than exclusive: when the API returns fewer than asked for and a
+    CSV glob is set, they top up from the import folder. That behaviour is
+    kept -- an empty API result with usable exports sitting on disk should
+    still produce a batch -- which does mean this adapter can return rows
+    sourced from CSV. The per-row `source` says so.
     """
 
     id = "apollo"
@@ -168,18 +203,58 @@ class ApolloDiscovery:
         """
         Always true, and not an oversight.
 
-        `apollo.search()` degrades to the CSV import folder on its own when
-        there is no API key -- that is how a keyless install has always
-        produced B2B leads. Reporting unavailable here would make the resolver
-        skip to the null adapter and throw those rows away. When there is
-        neither a key nor a usable export, `find()` returns nothing and the
-        wrapped module logs which of the two was missing.
+        Both `apollo.search()` and `apollo.search_organizations()` degrade to
+        the CSV import folder on their own when there is no API key -- that is
+        how a keyless install has always produced B2B leads. Reporting
+        unavailable here would make the resolver skip to the null adapter and
+        throw those rows away. When there is neither a key nor a usable
+        export, `find()` returns nothing and the wrapped module logs which of
+        the two was missing.
         """
         return True
 
     def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
-        result = apollo.search(
-            titles=request.titles,
+        if not request.titles and not request.locations and not request.search_terms and not request.industries:
+            # Nothing to search on at all -- not even a place. An unfiltered
+            # organization search would spend a real Apollo credit (and a CSV
+            # fallback would return every company on disk) to answer a
+            # question nobody asked. Same rule as LocalSearchDiscovery: no
+            # category or nowhere to look is not "zero businesses", it is
+            # nothing having been asked.
+            return ProviderResult.failure(
+                ProviderError(
+                    ErrorCode.CONFIGURATION_ERROR,
+                    provider="apollo",
+                    operation="discover",
+                    message=f"niche={request.niche_id!r} region={request.region!r}: "
+                    "no titles, locations, search terms or industries given",
+                    user_message="This audience has no place to search and no specific "
+                    "role or company keyword.",
+                    user_action="Describe a place to search, or a job title, trade or "
+                    "industry, and try again.",
+                ),
+                data=[],
+            )
+
+        if request.titles:
+            result = apollo.search(
+                titles=request.titles,
+                locations=request.locations,
+                industries=request.industries,
+                employee_range=request.employee_range,
+                limit=request.limit,
+                csv_glob=request.csv_glob,
+            )
+            if not result.ok:
+                return ProviderResult.failure(result.error, data=[], metadata=result.metadata)  # type: ignore[arg-type]
+            return ProviderResult.success(
+                "apollo", "discover_contacts",
+                [_from_contact(contact) for contact in result.data],
+                metadata=result.metadata,
+            )
+
+        result = apollo.search_organizations(
+            keywords=request.search_terms,
             locations=request.locations,
             industries=request.industries,
             employee_range=request.employee_range,
@@ -189,8 +264,8 @@ class ApolloDiscovery:
         if not result.ok:
             return ProviderResult.failure(result.error, data=[], metadata=result.metadata)  # type: ignore[arg-type]
         return ProviderResult.success(
-            "apollo", "discover_contacts",
-            [_from_contact(contact) for contact in result.data],
+            "apollo", "discover_companies",
+            [_from_organization(org) for org in result.data],
             metadata=result.metadata,
         )
 

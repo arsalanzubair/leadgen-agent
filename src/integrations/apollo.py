@@ -37,6 +37,12 @@ from src.reliability import log
 from src.settings import ROOT, env
 
 APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
+#: Company-level search: verified against Apollo's current API reference
+#: (organization-search). Separate endpoint, separate credit cost, separate
+#: response shape (`organizations`, not `people`) -- used when the request
+#: names no job title, so there is nobody to look up in the contact database
+#: but a company-level search can still run.
+APOLLO_ORG_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_companies/search"
 
 
 @dataclass
@@ -51,6 +57,20 @@ class ContactResult:
     website: str = ""
     location: str = ""
     industry: str = ""
+    employee_count: int | None = None
+    source: str = "apollo"
+
+
+@dataclass
+class OrganizationResult:
+    """One discovered company, with no named contact -- from organization
+    search or from a CSV export read at company granularity."""
+
+    company_name: str
+    website: str = ""
+    industry: str = ""
+    location: str = ""
+    linkedin_url: str = ""
     employee_count: int | None = None
     source: str = "apollo"
 
@@ -351,3 +371,186 @@ def search(
         results = results + import_csvs(csv_glob)
 
     return ProviderResult.success("apollo", _OPERATION, results[:limit] if limit else results)
+
+
+# --------------------------------------------------------------------------- #
+# Apollo API -- organization (company-level) search
+# --------------------------------------------------------------------------- #
+
+_ORG_OPERATION = "discover_companies"
+
+
+def _search_apollo_organizations(
+    keywords: list[str],
+    locations: list[str],
+    employee_range: list[int] | None,
+    limit: int,
+) -> list[OrganizationResult]:
+    """
+    One call to `mixed_companies/search` -- Apollo's company-level search, a
+    different endpoint and response shape from `mixed_people/search`. Used
+    when a request names no job title: "find businesses in Germany" and
+    "SaaS companies in the UK" both need a company, not a named contact, and
+    forcing them through the people endpoint with empty titles would ask a
+    contact database a question it cannot answer. Same failure contract as
+    `_search_apollo`: raises `ProviderError` for every failure.
+    """
+    payload: dict[str, Any] = {
+        "page": 1,
+        "per_page": min(limit, 100),
+    }
+    if keywords:
+        payload["q_organization_keyword_tags"] = keywords
+    if locations:
+        payload["organization_locations"] = locations
+    if employee_range and len(employee_range) == 2:
+        payload["organization_num_employees_ranges"] = [
+            f"{employee_range[0]},{employee_range[1]}"
+        ]
+
+    try:
+        response = requests.post(
+            APOLLO_ORG_SEARCH_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Cache-Control": "no-cache",
+                "x-api-key": env("APOLLO_API_KEY"),
+            },
+            json=payload,
+            timeout=45,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="apollo", operation=_ORG_OPERATION) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="apollo", operation=_ORG_OPERATION) from exc
+
+    if response.status_code == 403:
+        # Organization search is a paid-plan endpoint on Apollo, distinct from
+        # (and more commonly restricted than) people search -- named the same
+        # way the people-search 403 is, so the reason is not "permission
+        # denied" but a fact the user can act on.
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION,
+            provider="apollo",
+            operation=_ORG_OPERATION,
+            message=f"403: {response.text[:200]}",
+            user_message="Apollo's organization search is only available on paid Apollo plans.",
+            user_action="Use the CSV import folder instead, or upgrade the Apollo plan.",
+            retryable=False,
+            http_status=403,
+        )
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise classify_http_status(
+            429, response.text, provider="apollo", operation=_ORG_OPERATION,
+            retry_after=float(retry_after) if retry_after else None,
+        )
+    if response.status_code != 200:
+        raise classify_http_status(
+            response.status_code, response.text, provider="apollo", operation=_ORG_OPERATION,
+        )
+
+    try:
+        payload_json = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="apollo", operation=_ORG_OPERATION,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
+
+    results: list[OrganizationResult] = []
+    for org in payload_json.get("organizations", []):
+        name = (org.get("name") or "").strip()
+        if not name:
+            continue
+        results.append(
+            OrganizationResult(
+                company_name=name,
+                website=(org.get("website_url") or "").strip(),
+                industry=(org.get("industry") or "").strip(),
+                location=", ".join(
+                    x for x in (org.get("city"), org.get("state"), org.get("country")) if x
+                ),
+                linkedin_url=(org.get("linkedin_url") or "").strip(),
+                employee_count=org.get("estimated_num_employees"),
+                source="apollo",
+            )
+        )
+    return results
+
+
+def _organizations_from_csv(pattern: str) -> list[OrganizationResult]:
+    """
+    Company-level projection of the same CSV rows `import_csvs` reads, one row
+    per company, for a search with no title to match contacts against.
+    """
+    seen: set[str] = set()
+    orgs: list[OrganizationResult] = []
+    for contact in import_csvs(pattern):
+        if contact.company_name in seen:
+            continue
+        seen.add(contact.company_name)
+        orgs.append(
+            OrganizationResult(
+                company_name=contact.company_name,
+                website=contact.website,
+                industry=contact.industry,
+                location=contact.location,
+                linkedin_url=contact.linkedin_url,
+                employee_count=contact.employee_count,
+                source="csv",
+            )
+        )
+    return orgs
+
+
+def search_organizations(
+    *,
+    keywords: list[str] | None = None,
+    locations: list[str] | None = None,
+    industries: list[str] | None = None,
+    employee_range: list[int] | None = None,
+    limit: int = 25,
+    csv_glob: str = "",
+) -> ProviderResult[list[OrganizationResult]]:
+    """
+    Discover companies by location and/or industry keyword, with no job title
+    required -- the "find businesses in Germany" and "SaaS companies in the
+    UK" case a people search cannot serve on its own. Same reliability
+    contract as `search()`: CSV import tops up or substitutes company rows,
+    but a genuine API failure is reported, never silently swallowed into an
+    empty list, and a rejected key never endlessly retries.
+    """
+    combined_keywords = list(dict.fromkeys([*(keywords or []), *(industries or [])]))
+
+    if not has_api_key():
+        log.debug("no APOLLO_API_KEY set; using CSV import only for organization search")
+        rows = _organizations_from_csv(csv_glob) if csv_glob else []
+        return ProviderResult.success(
+            "apollo", _ORG_OPERATION, rows[:limit] if limit else rows,
+            metadata={"source": "csv_only"},
+        )
+
+    try:
+        results = call_with_retries(
+            _search_apollo_organizations,
+            combined_keywords, locations or [], employee_range, limit,
+        )
+    except ProviderError as err:
+        log.warning("Apollo organization search failed (%s); trying CSV import", err)
+        if csv_glob:
+            fallback_rows = _organizations_from_csv(csv_glob)
+            if fallback_rows:
+                return ProviderResult.success(
+                    "apollo", _ORG_OPERATION,
+                    fallback_rows[:limit] if limit else fallback_rows,
+                    metadata={"fallback": "csv_import", "original_error": err.code.value},
+                )
+        return ProviderResult.failure(err)
+
+    if len(results) < limit and csv_glob:
+        results = results + _organizations_from_csv(csv_glob)
+
+    return ProviderResult.success(
+        "apollo", _ORG_OPERATION, results[:limit] if limit else results
+    )

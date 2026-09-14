@@ -103,33 +103,39 @@ DISCOVERY vs QUALIFICATION -- keep these separate, because they are answered \
 by different tools:
 - search_terms and titles are what a map search or a contact database can \
 actually look up: a type of shop, trade or profession ("dental clinic", \
-"machine shop"), or a job title ("Head of Support"). These must be real, \
-searchable categories -- never a technology a business uses or lacks, a \
-policy, a practice, or anything only knowable from reading their website.
+"machine shop"), a real industry or company keyword ("SaaS", "logistics"), \
+or a job title ("Head of Support"). These must be real, searchable \
+categories -- never a technology a business uses or lacks, a policy, a \
+practice, or anything only knowable from reading their website.
 - good_signals and disqualifiers are for everything else the description \
 mentions that discovery cannot filter on: using or lacking a particular \
-tool, having or lacking some feature, following some practice. "without \
-AI-powered customer support", "still using paper forms", "using competitor \
-X" all belong here, to be checked once a business is FOUND -- never used to \
-find one.
+tool, having or lacking some feature, following some practice, hiring for a \
+role. "without AI-powered customer support", "still using paper forms", \
+"using competitor X", "hiring salespeople" all belong here, to be checked \
+once a business is FOUND -- never used to find one.
 - When the description names both a real category and a qualifying trait \
-("restaurants that don't take online bookings"), split them: search_terms \
-gets the category, good_signals/disqualifiers gets the trait.
+("restaurants that don't take online bookings", "SaaS companies hiring \
+salespeople"), split them: search_terms gets the category, \
+good_signals/disqualifiers gets the trait.
 - When the description names NO real, searchable category at all -- only a \
 trait, or a word too generic to search with ("businesses", "companies") -- \
 leave search_terms and titles EMPTY rather than inventing one. An invented \
 category returns confident-looking results for the wrong audience; an \
-honest empty list says plainly that discovery needs a real category to work \
-with.
+honest empty list says plainly that this is a broad search by location \
+rather than a search for one kind of business. Broad is a valid outcome, \
+never a reason to invent a category.
 
 Rules:
 - kind is "local_business" for anything found on a map (shops, clinics, \
-trades, restaurants, salons, gyms), and "b2b" for companies reached through a \
-named person in a role.
-- search_terms: 2-5 short phrases somebody would type into a maps search, or \
-empty per the rule above. Only for local_business; leave empty for b2b.
-- titles: 3-6 job titles worth writing to, or empty per the rule above. Only \
-for b2b; leave empty otherwise.
+trades, restaurants, salons, gyms), and "b2b" for companies or people found \
+through a company database rather than a map.
+- search_terms: 2-5 short phrases. For local_business, phrases somebody would \
+type into a maps search. For b2b, real industry or company keywords (never a \
+job title) when the description names one -- otherwise empty per the rule \
+above.
+- titles: 3-6 job titles worth writing to, only when the description names \
+specific roles or seniority. Only for b2b; leave empty otherwise, and leave \
+empty for a company-level b2b request that names no role at all.
 - good_signals: 4-6 observable, checkable things that make one of these worth \
 contacting, including any qualifying trait from the description that is not \
 itself a search category. Each must be something you could verify from a \
@@ -218,7 +224,11 @@ def draft_niche(body: DraftRequest) -> dict[str, Any]:
         "id": _slug(label),
         "label": label,
         "kind": kind,
-        "search_terms": _strings(parsed.get("search_terms")) if kind == "local_business" else [],
+        # search_terms now applies to both kinds: a maps-search phrase for
+        # local_business, an organization keyword (industry, product
+        # category) for b2b. titles stays b2b-only -- a map search has no
+        # concept of a job title.
+        "search_terms": _strings(parsed.get("search_terms")),
         "titles": _strings(parsed.get("titles")) if kind == "b2b" else [],
         "locations": locations,
         "description": str(parsed.get("description") or "").strip(),

@@ -349,6 +349,116 @@ def test_apollo_reports_plan_limitation_when_csv_has_nothing_either(monkeypatch,
     assert "free plan" in result.error.user_message
 
 
+def test_apollo_organization_search_hits_the_company_endpoint(monkeypatch):
+    """
+    Verified against Apollo's current API reference: organization search is
+    `POST /api/v1/mixed_companies/search`, a different endpoint and response
+    shape (`organizations`, not `people`) from people search.
+    """
+    monkeypatch.setenv("APOLLO_API_KEY", "fake")
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"organizations": [{
+                "name": "Musterfirma GmbH", "website_url": "https://musterfirma.example",
+                "industry": "retail", "city": "Berlin", "country": "Germany",
+                "estimated_num_employees": 42,
+            }]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["payload"] = json
+        return Response()
+
+    monkeypatch.setattr(apollo.requests, "post", fake_post)
+    results = apollo._search_apollo_organizations(["retail"], ["Germany"], None, 10)
+
+    assert captured["url"] == apollo.APOLLO_ORG_SEARCH_URL
+    assert captured["url"] != apollo.APOLLO_SEARCH_URL
+    assert captured["payload"]["q_organization_keyword_tags"] == ["retail"]
+    assert captured["payload"]["organization_locations"] == ["Germany"]
+    assert results[0].company_name == "Musterfirma GmbH"
+    assert results[0].location == "Berlin, Germany"
+    assert results[0].employee_count == 42
+
+
+def test_apollo_organization_search_403_is_a_plan_limitation(monkeypatch):
+    from src.providers.results import ErrorCode
+
+    monkeypatch.setenv("APOLLO_API_KEY", "fake")
+
+    class Response:
+        status_code = 403
+        text = '{"message": "This endpoint is only available to Apollo users on paid plans."}'
+
+    monkeypatch.setattr(apollo.requests, "post", lambda *a, **k: Response())
+    with pytest.raises(apollo.ProviderError) as caught:
+        apollo._search_apollo_organizations([], ["Germany"], None, 10)
+    assert caught.value.code is ErrorCode.PLAN_LIMITATION
+    assert "paid" in caught.value.user_message.lower()
+
+
+def test_organization_search_falls_back_to_csv_when_the_api_fails(monkeypatch, tmp_path):
+    from src.providers.results import ErrorCode, ProviderError
+
+    monkeypatch.setenv("APOLLO_API_KEY", "fake")
+    monkeypatch.setenv("APOLLO_CSV_IMPORT_DIR", str(tmp_path))
+    (tmp_path / "b2b_x.csv").write_text(
+        "Company,Name,Email\nNordwind,Katrin Vogel,katrin@nordwind.de\n"
+        "Nordwind,Second Contact,second@nordwind.de\n",
+        encoding="utf-8",
+    )
+
+    def explode(*args, **kwargs):
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION, provider="apollo", operation="discover_companies",
+            message="apollo 403",
+        )
+
+    monkeypatch.setattr(apollo, "_search_apollo_organizations", explode)
+    result = apollo.search_organizations(keywords=["logistics"], csv_glob="b2b_*.csv")
+    assert result.ok, "a usable CSV export must recover from an organization-search failure"
+    assert len(result.data) == 1, "two contacts at the same company must collapse to one org"
+    assert result.data[0].company_name == "Nordwind"
+    assert result.data[0].source == "csv"
+
+
+def test_organization_search_reports_failure_when_csv_has_nothing_either(monkeypatch, tmp_path):
+    from src.providers.results import ErrorCode, ProviderError
+
+    monkeypatch.setenv("APOLLO_API_KEY", "fake")
+    monkeypatch.setenv("APOLLO_CSV_IMPORT_DIR", str(tmp_path))  # empty directory
+
+    def explode(*args, **kwargs):
+        raise ProviderError(
+            ErrorCode.PLAN_LIMITATION, provider="apollo", operation="discover_companies",
+            message="apollo 403",
+            user_message="Apollo's organization search is only available on paid Apollo plans.",
+        )
+
+    monkeypatch.setattr(apollo, "_search_apollo_organizations", explode)
+    result = apollo.search_organizations(locations=["Germany"])
+    assert not result.ok
+    assert result.error.code is ErrorCode.PLAN_LIMITATION
+    assert "paid" in result.error.user_message.lower()
+
+
+def test_organization_search_with_no_api_key_uses_csv_only(monkeypatch, tmp_path):
+    monkeypatch.delenv("APOLLO_API_KEY", raising=False)
+    monkeypatch.setenv("APOLLO_CSV_IMPORT_DIR", str(tmp_path))
+    (tmp_path / "b2b_x.csv").write_text(
+        "Company,Name,Email\nNordwind,Katrin Vogel,katrin@nordwind.de\n", encoding="utf-8"
+    )
+    result = apollo.search_organizations(csv_glob="b2b_*.csv")
+    assert result.ok
+    assert result.data[0].company_name == "Nordwind"
+    assert result.metadata["source"] == "csv_only"
+
+
 def test_apollo_redacted_emails_are_dropped(monkeypatch):
     monkeypatch.setenv("APOLLO_API_KEY", "fake")
 

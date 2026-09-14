@@ -361,14 +361,14 @@ def _validate(raw: dict[str, Any], tenant_id: str, path: Path) -> None:
             problems.append(f"{where}.icp must be a mapping")
         discovery = niche.get("discovery") or {}
         if isinstance(discovery, dict):
-            if niche_type == "local_business" and not discovery.get("search_terms"):
-                problems.append(
-                    f"{where}.discovery: local_business niches need 'search_terms'"
-                )
-            if niche_type == "b2b" and not discovery.get("titles"):
-                problems.append(
-                    f"{where}.discovery: b2b niches need 'titles' for role-based targeting"
-                )
+            # A category (search_terms/titles) is no longer required. "Find
+            # businesses in Germany without AI-powered customer support" names
+            # a real place and a real qualifying trait but no map category or
+            # job title -- that is a legitimate broad company search by
+            # location, not an incomplete niche. A place to search IS still
+            # required: there is no honest broadest search with nowhere to
+            # look, and locations is the one field discovery cannot proceed
+            # without regardless of how the request is routed.
             if not discovery.get("locations"):
                 problems.append(f"{where}.discovery: missing 'locations'")
         else:
