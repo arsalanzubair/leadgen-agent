@@ -369,6 +369,7 @@ def _execute(tenant_id: str, run_id: str, config: dict[str, Any]) -> None:
     # Imported here rather than at module scope: this pulls in the whole graph
     # and every provider, which the settings service should not pay for just to
     # answer a request about connections.
+    from backend.workspace import friendly_config_error
     from src.cli.run_batch import run_batch
     from src.reliability import ConfigError
 
@@ -390,7 +391,7 @@ def _execute(tenant_id: str, run_id: str, config: dict[str, Any]) -> None:
             region=regions[0] if len(regions) == 1 else "",
         )
     except ConfigError as exc:
-        error = str(exc)
+        error = friendly_config_error(exc)
     except BaseException as exc:  # noqa: BLE001 -- the record must always close
         error = f"{exc.__class__.__name__}: {exc}"
     finally:

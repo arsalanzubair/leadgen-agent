@@ -51,7 +51,7 @@ from backend.routers import (
     runs as run_routes,
     settings as settings_routes,
 )
-from backend.workspace import resolve_tenant_id
+from backend.workspace import friendly_config_error, resolve_tenant_id
 from src.reliability import ConfigError
 from src.settings import env, env_bool
 
@@ -98,11 +98,16 @@ def handle_config_error(_request: Request, exc: ConfigError) -> JSONResponse:
     """
     A rejected configuration is the user's problem to fix, not a server fault.
 
-    The agent's validator reports every problem it found at once rather than
-    the first, so the message can be long -- and it is passed through intact,
-    because a truncated list means a second failed save.
+    This is the last line of defence, for any route that raises `ConfigError`
+    without translating it itself -- most already do, via
+    `friendly_config_error`. workspace.py's own hand-written messages ("there
+    is already an audience called ...") are plain language already and pass
+    through unchanged; the agent's file validator's own message names a file
+    path and the config's internal shape ("niches[x].discovery: missing
+    'locations'") and must never reach a user, so that one gets translated
+    here too rather than leaking through any route that forgot to.
     """
-    return JSONResponse(status_code=422, content={"detail": str(exc)})
+    return JSONResponse(status_code=422, content={"detail": friendly_config_error(exc)})
 
 
 @app.exception_handler(secrets_store.SecretsError)

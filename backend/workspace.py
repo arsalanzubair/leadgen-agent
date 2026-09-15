@@ -41,6 +41,30 @@ from src.nodes.n0_config_load import _validate, load_tenant_config
 from src.reliability import ConfigError
 from src.settings import ROOT, allowed_tenants, env, tenant_config_path
 
+#: `ConfigError` is raised here for two very different reasons: this module's
+#: own hand-written messages ("there is already an audience called ...") are
+#: already plain language and meant to reach a user; `_validate`'s own
+#: message names a file path and the config's internal shape
+#: ("niches[x].discovery: missing 'locations'") and must never reach one, per
+#: this product's no-internal-vocabulary rule. The two are told apart by the
+#: validator's fixed opening words.
+_VALIDATOR_ERROR_PREFIX = "tenant config "
+
+
+def friendly_config_error(exc: ConfigError) -> str:
+    """The message from a `ConfigError`, translated if it is the validator's own."""
+    text = str(exc)
+    if not text.startswith(_VALIDATOR_ERROR_PREFIX):
+        return text
+    if "'locations'" in text:
+        return (
+            "Add a place to search -- a city, country or region -- or a "
+            "specific type of business, trade, or job title. For example "
+            "\"Germany\", \"dental clinics\", or \"Heads of Customer Support\"."
+        )
+    return "That couldn't be saved. Check the details and try again."
+
+
 def _round_trip_yaml() -> YAML:
     """
     A FRESH parser for every call. This is not fastidiousness.

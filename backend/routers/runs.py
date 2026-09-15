@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend import runs, workspace
-from backend.routers.niches import draft_niche, DraftRequest, _slug
+from backend.routers.niches import _slug, draft_niche, DraftRequest
 from src.reliability import ConfigError
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -80,6 +80,23 @@ def parse_request(body: ParseRequest) -> dict[str, Any]:
                 "specific type of business, trade, or job title. For example "
                 "\"Germany\", \"dental clinics\", or \"Heads of Customer "
                 "Support\"."
+            ),
+        )
+
+    # A place was named, but it is not one of this workspace's regions (see
+    # `draft_niche`). Falling through would silently turn "dental clinics in
+    # Japan" into "dental clinics everywhere this workspace operates" -- the
+    # request must say so instead of quietly substituting a different search.
+    unmatched = draft.get("unmatched_locations") or []
+    if unmatched and not has_location:
+        places = ", ".join(dict.fromkeys(unmatched))
+        supported = ", ".join(rules["regions"]) or "none yet"
+        raise HTTPException(
+            422,
+            detail=(
+                f"This workspace doesn't search in {places} yet -- it "
+                f"currently searches in: {supported}. Use one of those, or "
+                "leave the location out to search everywhere it operates."
             ),
         )
 
@@ -157,12 +174,15 @@ def start_run(body: StartRequest) -> dict[str, Any]:
                 "business type, trade or job title. Describe a place or a "
                 "category and start the search again.",
             )
-        payload = {k: v for k, v in draft.items() if k != "interpretation"}
+        payload = {
+            k: v for k, v in draft.items()
+            if k not in ("interpretation", "unmatched_locations")
+        }
         payload["id"] = missing[0]
         try:
             workspace.save_niche(tenant_id, payload, creating=True)
         except ConfigError as exc:
-            raise HTTPException(422, detail=str(exc))
+            raise HTTPException(422, detail=workspace.friendly_config_error(exc))
         config["niche_ids"] = [missing[0]]
 
     try:

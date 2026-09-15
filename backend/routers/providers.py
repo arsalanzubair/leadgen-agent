@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.providers import PROVIDERS, PROVIDERS_BY_ID
-from backend.workspace import read_selection, resolve_tenant_id, save_selection
+from backend.workspace import friendly_config_error, read_selection, resolve_tenant_id, save_selection
 from src.providers import registry
 from src.providers.base import Capability
 from src.reliability import ConfigError
@@ -158,7 +158,7 @@ def get_selection() -> dict[str, dict[str, Any]]:
     try:
         return read_selection(tenant_id)
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc)) from None
+        raise HTTPException(422, detail=friendly_config_error(exc)) from None
 
 
 @router.put("/selection/{capability}")
@@ -180,4 +180,4 @@ def put_selection(capability: str, body: SelectionBody) -> dict[str, dict[str, A
             settings=body.settings,
         )
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc)) from None
+        raise HTTPException(422, detail=friendly_config_error(exc)) from None

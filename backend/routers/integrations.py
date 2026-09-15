@@ -29,6 +29,7 @@ from backend.providers import (
     validate_values,
 )
 from backend.workspace import (
+    friendly_config_error,
     read_capability_settings,
     resolve_tenant_id,
     save_capability_settings,
@@ -184,7 +185,7 @@ def save_connection(provider_id: str, body: ConnectionValues) -> dict[str, Any]:
                 tenant_id, provider.spec.capability.value, settings
             )
         except ConfigError as exc:
-            raise HTTPException(422, detail=str(exc)) from None
+            raise HTTPException(422, detail=friendly_config_error(exc)) from None
         values = {
             name: value for name, value in body.values.items() if name in secret_fields
         }

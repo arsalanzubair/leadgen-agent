@@ -52,6 +52,47 @@ def _slug(text: str) -> str:
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", text.lower())).strip("_")[:48]
 
 
+#: Common ways a person names one of this workspace's regions without using
+#: its code. The drafting prompt asks the model to key `locations` with the
+#: code directly, but "the user said USA" often survives into its answer
+#: verbatim -- this maps the spelling people actually use to the fixed, small
+#: set of codes `config/compliance_profiles.yaml` defines. It is a spelling
+#: normalisation, not a guess: unlike a business category, the set of things
+#: "USA" can mean is not open-ended.
+_REGION_ALIASES: dict[str, str] = {
+    "us": "US", "usa": "US", "u.s.": "US", "u.s.a.": "US",
+    "united states": "US", "united states of america": "US", "america": "US",
+    "uk": "UK", "u.k.": "UK", "united kingdom": "UK", "britain": "UK",
+    "great britain": "UK", "england": "UK", "scotland": "UK", "wales": "UK",
+    "northern ireland": "UK",
+    "eu": "EU", "europe": "EU", "european union": "EU",
+    "ca": "CA", "canada": "CA",
+    "au": "AU", "aus": "AU", "australia": "AU",
+    "me": "ME", "middle east": "ME", "uae": "ME", "u.a.e.": "ME",
+    "united arab emirates": "ME", "saudi arabia": "ME", "ksa": "ME", "gcc": "ME",
+}
+
+
+def _normalise_region(key: str, regions: list[str]) -> str | None:
+    """
+    Match a region name the model returned to one this workspace actually
+    operates in, tolerating the spelling and case a person would type even
+    though the prompt asks for the code itself.
+
+    None means the place named is genuinely not one of this workspace's
+    regions -- the caller's job, not this function's, to decide what an
+    unsupported region should do.
+    """
+    text = key.strip().lower()
+    if not text:
+        return None
+    for region in regions:
+        if text == region.lower():
+            return region
+    mapped = _REGION_ALIASES.get(text)
+    return mapped if mapped in regions else None
+
+
 @router.get("")
 def list_niches() -> list[dict[str, Any]]:
     return workspace.read_niches(workspace.resolve_tenant_id())
@@ -66,7 +107,7 @@ def create_niche(payload: NichePayload) -> dict[str, Any]:
     try:
         return workspace.save_niche(workspace.resolve_tenant_id(), body, creating=True)
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
 
 
 @router.put("/{niche_id}")
@@ -76,7 +117,7 @@ def update_niche(niche_id: str, payload: NichePayload) -> dict[str, Any]:
     try:
         return workspace.save_niche(workspace.resolve_tenant_id(), body, creating=False)
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
 
 
 @router.delete("/{niche_id}")
@@ -84,7 +125,7 @@ def delete_niche(niche_id: str) -> dict[str, str]:
     try:
         workspace.delete_niche(workspace.resolve_tenant_id(), niche_id)
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
     return {"id": niche_id}
 
 
@@ -170,10 +211,11 @@ def draft_niche(body: DraftRequest) -> dict[str, Any]:
 
     prompt = (
         f"The user says: {description!r}\n\n"
-        f"Places this workspace operates in: {regions}. Use only these region "
-        f"codes as keys in `locations`, and put the cities or countries the "
-        f"description mentions under the right one. If no place is named, "
-        f"leave locations empty.\n\n"
+        f"Places this workspace operates in: {regions}. `locations` keys must "
+        f"be EXACTLY one of these codes -- never a country name, and never a "
+        f"variant like \"USA\" or \"United States\" in place of \"US\" -- with "
+        f"the cities or countries the description mentions listed under the "
+        f"matching one. If no place is named, leave locations empty.\n\n"
         "Return JSON with keys: label, kind, search_terms, titles, locations, "
         "description, must_have, good_signals, disqualifiers, channel_default, "
         "size_hint, interpretation."
@@ -212,11 +254,22 @@ def draft_niche(body: DraftRequest) -> dict[str, Any]:
     if channel not in ("email", "linkedin", "both"):
         channel = "linkedin" if kind == "b2b" else "email"
 
-    locations = {
-        region: [str(place) for place in places if str(place).strip()]
-        for region, places in (parsed.get("locations") or {}).items()
-        if region in regions and places
-    }
+    locations: dict[str, list[str]] = {}
+    unmatched_locations: list[str] = []
+    for region, places in (parsed.get("locations") or {}).items():
+        cleaned = [str(place).strip() for place in (places or []) if str(place).strip()]
+        if not cleaned:
+            continue
+        match = _normalise_region(str(region), regions)
+        if match:
+            locations.setdefault(match, []).extend(cleaned)
+        else:
+            # A place the model named but that this workspace does not
+            # operate in. Dropping it silently would turn "find dental
+            # clinics in Japan" into "find dental clinics everywhere this
+            # workspace operates" with no indication that Japan was ignored
+            # -- exactly the silent substitution this drafter must never do.
+            unmatched_locations.extend(cleaned)
 
     label = str(parsed.get("label") or description)[:80]
 
@@ -239,6 +292,11 @@ def draft_niche(body: DraftRequest) -> dict[str, Any]:
         "tone": "",
         "size_hint": str(parsed.get("size_hint") or "").strip(),
         "interpretation": str(parsed.get("interpretation") or "").strip(),
+        # Not part of the saved audience -- read by the routes below to tell
+        # the user a named place was not searched, instead of quietly
+        # searching every region this workspace operates in as though no
+        # place had been named at all.
+        "unmatched_locations": unmatched_locations,
     }
 
 

@@ -82,7 +82,7 @@ def get_profile() -> dict[str, str]:
     try:
         return workspace.read_profile(workspace.resolve_tenant_id())
     except ConfigError as exc:
-        raise HTTPException(500, detail=str(exc))
+        raise HTTPException(500, detail=workspace.friendly_config_error(exc))
 
 
 @router.put("/profile")
@@ -93,7 +93,7 @@ def put_profile(patch: ProfilePatch) -> dict[str, str]:
     try:
         return workspace.save_profile(workspace.resolve_tenant_id(), body)
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +105,7 @@ def get_rules() -> dict[str, Any]:
     try:
         return workspace.read_rules(workspace.resolve_tenant_id())
     except ConfigError as exc:
-        raise HTTPException(500, detail=str(exc))
+        raise HTTPException(500, detail=workspace.friendly_config_error(exc))
 
 
 @router.put("/rules")
@@ -115,7 +115,9 @@ def put_rules(patch: RulesPatch) -> dict[str, Any]:
         return workspace.read_rules(workspace.resolve_tenant_id())
     try:
         return workspace.save_rules(workspace.resolve_tenant_id(), body)
-    except (ConfigError, ValueError) as exc:
+    except ConfigError as exc:
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
+    except ValueError as exc:
         raise HTTPException(422, detail=str(exc))
 
 
@@ -128,7 +130,7 @@ def get_agent_rules() -> list[dict[str, Any]]:
     try:
         return workspace.read_agent_rules(workspace.resolve_tenant_id())
     except ConfigError as exc:
-        raise HTTPException(500, detail=str(exc))
+        raise HTTPException(500, detail=workspace.friendly_config_error(exc))
 
 
 @router.post("/agent-rules")
@@ -138,7 +140,7 @@ def post_agent_rule(body: AgentRuleBody) -> dict[str, Any]:
             workspace.resolve_tenant_id(), body.kind, body.text
         )
     except ConfigError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=workspace.friendly_config_error(exc))
 
 
 @router.delete("/agent-rules/{rule_id}")
@@ -146,5 +148,5 @@ def delete_agent_rule(rule_id: str) -> dict[str, str]:
     try:
         workspace.delete_agent_rule(workspace.resolve_tenant_id(), rule_id)
     except ConfigError as exc:
-        raise HTTPException(404, detail=str(exc))
+        raise HTTPException(404, detail=workspace.friendly_config_error(exc))
     return {"id": rule_id}
