@@ -220,8 +220,33 @@ def scrape_lead(lead: LeadState, niche_type: str, icp: dict[str, Any]) -> dict[s
 # Rationing the metered lookups
 # --------------------------------------------------------------------------- #
 
+def _wants_email(lead: LeadState, config: TenantConfig | None) -> bool:
+    """
+    False only for a lead whose audience is explicitly LinkedIn-only.
+
+    A niche with `channel_default: linkedin` never sends email at all, so
+    spending a metered lookup finding one is pure waste -- the address would
+    sit on the lead unused while a niche that actually needs one goes short.
+    Anything else (email, or both) still wants a lookup. `config` is optional
+    and a lookup failure is not treated as a reason to withhold the address:
+    the batch runner always has one, but a caller that does not is not
+    telling this function to refuse leads it cannot classify.
+    """
+    if config is None:
+        return True
+    try:
+        niche = config.niche(lead.get("niche_id", ""))
+    except Exception:  # noqa: BLE001 - an unresolvable niche is not this function's problem
+        return True
+    return niche.get("channel_default") != "linkedin"
+
+
 def select_lookup_candidates(
-    leads: list[LeadState], top_n: int, provider: Any | None = None
+    leads: list[LeadState],
+    top_n: int,
+    provider: Any | None = None,
+    *,
+    config: TenantConfig | None = None,
 ) -> list[str]:
     """
     Choose which leads may spend one of the month's paid contact lookups.
@@ -230,7 +255,8 @@ def select_lookup_candidates(
     has no LinkedIn URL either (so a lookup is the ONLY way to reach them),
     then richer signals first. Capped by both the tenant's top_n and whatever
     the provider says is actually left -- asking for 5 when 2 remain must not
-    silently burn the 2 on the wrong leads.
+    silently burn the 2 on the wrong leads. A lead whose audience is
+    LinkedIn-only is never eligible at all -- see `_wants_email`.
 
     This decision is comparative, so it happens once per batch rather than per
     lead: a single lead cannot know whether it is in the top 5 of a batch it
@@ -260,7 +286,7 @@ def select_lookup_candidates(
 
     eligible = [
         lead for lead in leads
-        if lead.get("website") and not lead.get("contact_email")
+        if lead.get("website") and not lead.get("contact_email") and _wants_email(lead, config)
     ]
     eligible.sort(key=priority)
     chosen = [lead["lead_id"] for lead in eligible[:budget]]

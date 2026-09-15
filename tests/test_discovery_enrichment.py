@@ -471,6 +471,59 @@ def test_local_business_niche_with_no_search_terms_routes_to_company_search(
     assert leads[0]["source"] == "apollo"
 
 
+def test_broad_local_search_prefers_google_places_over_apollo_when_connected(
+    config, monkeypatch
+):
+    """
+    The same "Germany" case, but this workspace HAS connected Google Places.
+    Unlike Overpass, Google's free-text search has no trouble with a plain,
+    location-only query -- so a categoryless local_business request should
+    stay local and use it, not fall back to a company database Apollo is not
+    even guaranteed to be configured for. Apollo must not be called at all.
+    """
+    config.raw["providers"] = dict(config.raw.get("providers") or {})
+    config.raw["providers"]["discovery_local"] = {"primary": "google_places"}
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "fake-key")
+    config.raw["niches"].append({
+        "id": "broad_germany_places",
+        "label": "Businesses in Germany",
+        "type": "local_business",
+        "channel_default": "email",
+        "discovery": {
+            "search_terms": [],
+            "locations": {"EU": ["Germany"]},
+            "max_results_per_location": 20,
+            "min_expected_leads": 5,
+        },
+        "icp": {"description": "x", "good_signals": ["y"]},
+    })
+
+    def apollo_must_not_run(**kwargs):
+        raise AssertionError("Apollo must not be called when Google Places can serve this")
+
+    monkeypatch.setattr(apollo, "search_organizations", apollo_must_not_run)
+
+    seen_queries: list[str] = []
+
+    def fake_search(query, limit=20):
+        seen_queries.append(query)
+        return ProviderResult.success(
+            "google_places", "discover_local",
+            [places.PlaceResult(name="Musterfirma GmbH", address="Berlin", source="google_places")],
+        )
+
+    monkeypatch.setattr(places, "search", fake_search)
+    from src.nodes.n1_discovery import discover_for_target
+
+    target = BatchTarget(niche_id="broad_germany_places", region="EU", language="en")
+    leads, error = discover_for_target(config, target)
+    assert error is None
+    assert leads
+    assert leads[0]["company_name"] == "Musterfirma GmbH"
+    assert leads[0]["source"] == "google_places"
+    assert seen_queries and "Germany" in seen_queries[0]
+
+
 def test_b2b_niche_with_no_titles_uses_organization_search_not_people_search(
     config, monkeypatch
 ):
@@ -699,6 +752,29 @@ def test_hunter_prioritises_leads_with_no_other_contact_route(monkeypatch):
     unreachable["lead_id"] = "target"
     chosen = select_hunter_candidates([reachable, unreachable], top_n=1)
     assert chosen == ["target"]
+
+
+def test_linkedin_only_audiences_never_spend_a_hunter_lookup(config, monkeypatch):
+    """
+    `b2b_saas_ops` is `channel_default: linkedin` in example_tenant.yaml -- it
+    never sends email at all, so finding one for it would spend a metered
+    lookup on an address that then sits unused while an email audience goes
+    short. Passing `config` must exclude it even though it is otherwise the
+    most eligible lead in the batch (no email, no LinkedIn URL either).
+    """
+    monkeypatch.setattr(hunter, "remaining_lookups", lambda: 25)
+    linkedin_only = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="b2b_saas_ops", region="CA",
+        company_name="LinkedIn Only Co", website="https://linkedin-only.example",
+    )
+    email_audience = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="local_dental", region="UK",
+        company_name="Email Co", website="https://email-co.example",
+    )
+    chosen = select_hunter_candidates(
+        [linkedin_only, email_audience], top_n=5, config=config,
+    )
+    assert chosen == [email_audience["lead_id"]]
 
 
 def test_hunter_counter_hard_stops_at_the_free_plan_cap(monkeypatch):

@@ -271,6 +271,11 @@ function LeadDetails({ lead, threshold }: { lead: Lead; threshold: number }) {
           <p className="mt-1 text-meta text-primary">
             {lead.fit_reason || story.interesting}
           </p>
+          {lead.fit_confidence < 0.4 ? (
+            <p className="mt-1 text-micro text-tertiary">
+              Based on limited evidence -- worth a quick look before relying on it.
+            </p>
+          ) : null}
         </div>
 
         {lead.signals.length ? (

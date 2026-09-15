@@ -165,6 +165,8 @@ export interface Lead {
   // qualification
   fit_score: number; // 0-100
   fit_reason: string;
+  /** How much of fit_score rests on real, cited evidence rather than a default. 0.0-1.0. */
+  fit_confidence: number;
 
   // outreach
   channel: Channel;
@@ -239,6 +241,7 @@ export const CRM_COLUMNS = [
   "last_touch_at",
   "next_touch_due",
   "last_updated",
+  "fit_confidence",
 ] as const satisfies readonly (keyof Lead)[];
 
 export type CrmColumn = (typeof CRM_COLUMNS)[number];

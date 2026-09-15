@@ -16,6 +16,7 @@ import pytest
 from src.integrations import llm
 from src.nodes.n0_config_load import load_tenant_config
 from src.nodes.n3_qualification import (
+    _coerce_confidence,
     _coerce_score,
     build_prompt,
     n3_qualification,
@@ -82,9 +83,12 @@ def test_prompt_marks_missing_evidence_explicitly(config):
 # --------------------------------------------------------------------------- #
 
 def test_no_signals_scores_low(config):
-    score, reason = score_offline(lead(signals=[]), config.niche("local_dental"))
+    score, confidence, reason = score_offline(lead(signals=[]), config.niche("local_dental"))
     assert score <= 35
     assert "no signals" in reason.lower()
+    # No evidence at all must read as unproven, not as a confident "no" --
+    # that distinction is the whole point of a separate confidence number.
+    assert confidence <= 0.3
 
 
 def test_matching_icp_signals_scores_high(config):
@@ -93,27 +97,31 @@ def test_matching_icp_signals_scores_high(config):
         "unanswered Google reviews",
         "hiring front-desk or treatment coordinator staff",
     ])
-    score, reason = score_offline(state, config.niche("local_dental"))
+    score, confidence, reason = score_offline(state, config.niche("local_dental"))
     assert score >= 60
     assert "ICP signal" in reason
+    assert confidence >= 0.7
 
 
 def test_a_disqualifier_caps_the_score(config):
     state = lead(signals=["part of a national chain with 20+ locations"])
-    score, reason = score_offline(state, config.niche("local_dental"))
+    score, confidence, reason = score_offline(state, config.niche("local_dental"))
     assert score <= 19
     assert "isqualif" in reason
+    # A disqualifier is specific, observed evidence -- confidence should be
+    # high even though the score itself is low.
+    assert confidence >= 0.7
 
 
 def test_site_disqualifier_marker_caps_the_score(config):
     state = lead(signals=["DISQUALIFIER found on site: already running a chatbot"])
-    score, _ = score_offline(state, config.niche("local_dental"))
+    score, _, _ = score_offline(state, config.niche("local_dental"))
     assert score <= 19
 
 
 def test_generic_signals_score_in_the_middle(config):
     state = lead(signals=["public phone number 0161 555 0100"])
-    score, _ = score_offline(state, config.niche("local_dental"))
+    score, _, _ = score_offline(state, config.niche("local_dental"))
     assert 20 <= score < 60
 
 
@@ -136,6 +144,23 @@ def test_coerce_score_rejects_nonsense(raw):
         _coerce_score(raw)
 
 
+@pytest.mark.parametrize(
+    "raw,expected", [(0.8, 0.8), (1, 1.0), ("0.6", 0.6), (1.5, 1.0), (-0.2, 0.0)],
+)
+def test_coerce_confidence(raw, expected):
+    assert _coerce_confidence(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [None, True, "not a number", object()])
+def test_coerce_confidence_defaults_rather_than_fabricating_certainty(raw):
+    """
+    A model that omits confidence gets the neutral default, not a retry and
+    not a made-up number pretending the model expressed an opinion it did
+    not -- see `_DEFAULT_CONFIDENCE_WHEN_UNSTATED`.
+    """
+    assert _coerce_confidence(raw) == 0.5
+
+
 # --------------------------------------------------------------------------- #
 # The node
 # --------------------------------------------------------------------------- #
@@ -144,6 +169,7 @@ def test_node_scores_and_explains(config):
     state = lead(signals=["no online booking system", "unanswered Google reviews"])
     update = n3_qualification(state, tenant_config=config)
     assert 0 <= update["fit_score"] <= 100
+    assert 0.0 <= update["fit_confidence"] <= 1.0
     assert update["fit_reason"]
     assert not update.get("archived")
 

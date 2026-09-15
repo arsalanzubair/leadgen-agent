@@ -156,21 +156,60 @@ def test_a_b2b_industry_with_no_titles_is_accepted_as_a_broad_search(monkeypatch
 
 def test_a_real_category_with_a_qualifying_trait_is_not_refused(monkeypatch):
     """
-    "Restaurants that don't take online bookings" -- search_terms carries
-    the real category, the trait goes to good_signals. This must proceed.
+    "Restaurants in London that don't take online bookings" -- search_terms
+    carries the real category, the trait goes to good_signals. This must
+    proceed. A location is included so this test exercises only the thing its
+    name describes; the no-location case has its own test below.
     """
     monkeypatch.setattr(
         runs_router, "draft_niche",
         lambda body: _draft(
             label="restaurants", search_terms=["restaurant"],
+            locations={"UK": ["London"]},
             good_signals=["no online booking system found on their site"],
         ),
     )
     plan = runs_router.parse_request(
-        runs_router.ParseRequest(prompt="restaurants that don't take online bookings")
+        runs_router.ParseRequest(prompt="restaurants in London that don't take online bookings")
     )
     assert plan["audience"] == "restaurants"
     assert plan["niche_ids"]
+
+
+def test_a_local_category_with_no_location_asks_rather_than_searching_everywhere(
+    monkeypatch,
+):
+    """
+    "Find dental clinics" names a real category and no place at all. This
+    workspace operates in more than one region (see example_tenant.yaml), so
+    silently searching all of them would run a materially different, larger
+    search than the one the user described -- exactly the silent invention
+    the drafting rules forbid for a category. The request must ask instead.
+    """
+    monkeypatch.setattr(
+        runs_router, "draft_niche",
+        lambda body: _draft(label="dental clinics", search_terms=["dental clinic"]),
+    )
+    with pytest.raises(HTTPException) as caught:
+        runs_router.parse_request(runs_router.ParseRequest(prompt="find dental clinics"))
+    assert caught.value.status_code == 422
+    assert "location" in str(caught.value.detail).lower()
+
+
+def test_a_role_with_no_location_is_not_asked_for_one(monkeypatch):
+    """
+    Unlike a map search, a role/company search (b2b) can genuinely run with
+    no location at all -- Apollo searches globally by title or industry.
+    "Find SaaS companies hiring SDRs" must not be blocked on a place.
+    """
+    monkeypatch.setattr(
+        runs_router, "draft_niche",
+        lambda body: _draft(label="SaaS companies", kind="b2b", search_terms=["SaaS"]),
+    )
+    plan = runs_router.parse_request(
+        runs_router.ParseRequest(prompt="Find SaaS companies hiring SDRs")
+    )
+    assert plan["audience"] == "SaaS companies"
 
 
 def test_a_named_job_title_satisfies_the_b2b_guard(monkeypatch):

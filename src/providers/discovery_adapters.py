@@ -212,6 +212,13 @@ class GoogleMapsDiscovery:
     id = "google_places"
     kind = "local_business"
 
+    #: Unlike Overpass (which needs a specific tag to query), Google Places'
+    #: free-text search has no trouble with a plain, location-only query --
+    #: `discover_for_target` reads this to decide whether a categoryless
+    #: local_business request ("find businesses in Germany") can stay local
+    #: instead of falling back to a company database.
+    supports_categoryless_search = True
+
     def available(self) -> bool:
         return places.has_google_key()
 

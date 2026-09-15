@@ -215,7 +215,7 @@ def run_batch(
     # -- N2 budgeting: the Hunter top-N is a batch-level decision ----------- #
     hunter_allowed = set(
         select_lookup_candidates(
-            leads, config.hunter_top_n, enrichment_for(config)
+            leads, config.hunter_top_n, enrichment_for(config), config=config,
         )
     )
     for lead in leads:

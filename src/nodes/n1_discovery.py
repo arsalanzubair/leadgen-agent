@@ -50,6 +50,13 @@ from src.state import (
     normalise_domain,
 )
 
+#: Not an invented category -- the literal generic word a request like "find
+#: businesses in Germany" already used. Google Places' free-text search can
+#: run this as a location-only query; it stands in for search_terms only for
+#: a provider whose `supports_categoryless_search` says it can make sense of
+#: one. See `discover_for_target`.
+BROAD_LOCAL_SEARCH_TERM = "businesses"
+
 # --------------------------------------------------------------------------- #
 # Per-tenant dedupe ledger
 # --------------------------------------------------------------------------- #
@@ -226,20 +233,34 @@ def discover_for_target(
 
     kind = str(niche.get("type") or "local_business")
     search_terms = list(discovery.get("search_terms") or [])
+    effective_kind = kind
 
     # A local_business niche with no map category ("find businesses in
-    # Germany") has nothing an OSM/Places text search can run -- those
-    # providers search a category within a place, not a place on its own.
-    # The honest broadest thing this workspace can do is a company-level
-    # search by location, which is what discovery_b2b's provider (Apollo, or
-    # a CSV export) actually supports with no title or category at all. This
-    # is provider selection driven by what the request names, not by the
-    # niche's declared type: the niche is still "local_business" as the user
-    # wrote it, only this particular search is broad enough to need the other
-    # capability.
+    # Germany") is a request an OSM/Overpass query cannot run at all --
+    # structured OSM discovery needs a specific tag, and there is no "any
+    # business" tag to ask for. Google Places' free-text search has no such
+    # constraint: it can run a plain, location-only query directly, so a
+    # workspace that has actually connected Google Places gets first refusal
+    # on this kind of request -- discovery stays local, no Apollo required.
+    # Only when nothing that can run a categoryless map search is connected
+    # does this fall back to a company-level search by location through
+    # discovery_b2b (Apollo, or a CSV export), which is the previous
+    # behaviour and stays exactly as it was for a workspace with no Google
+    # Places key. This is provider selection driven by what the request
+    # names and what is actually connected, not by the niche's declared type.
     broad_company_search = kind == "local_business" and not search_terms and locations
-    effective_kind = "b2b" if broad_company_search else kind
-    provider = discovery_for(config, niche, niche_type=effective_kind, tenant_id=config.tenant_id)
+    if broad_company_search:
+        local_provider = discovery_for(
+            config, niche, niche_type="local_business", tenant_id=config.tenant_id
+        )
+        if getattr(local_provider, "supports_categoryless_search", False):
+            provider = local_provider
+            search_terms = [BROAD_LOCAL_SEARCH_TERM]
+        else:
+            effective_kind = "b2b"
+            provider = discovery_for(config, niche, niche_type="b2b", tenant_id=config.tenant_id)
+    else:
+        provider = discovery_for(config, niche, niche_type=effective_kind, tenant_id=config.tenant_id)
 
     request = DiscoveryRequest(
         kind=effective_kind,

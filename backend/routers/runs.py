@@ -100,11 +100,38 @@ def parse_request(body: ParseRequest) -> dict[str, Any]:
             ),
         )
 
+    # A category was named ("dental clinics") but no place at all, and this
+    # workspace operates in more than one region -- "search everywhere it
+    # operates" is not a default, it is a materially different request the
+    # user never made, invented silently. A workspace with exactly one region
+    # has an unambiguous, visible default (it shows up in `regions` below) and
+    # is let through; more than one, or none yet configured, is not.
+    #
+    # This applies only to a local_business (map) search: a map provider
+    # genuinely cannot run without a place to look in. A b2b (role/company)
+    # search can -- Apollo searches by title or industry globally -- so
+    # asking for a location there would block a legitimate, already-supported
+    # global search over nothing.
+    if draft.get("kind") != "b2b" and has_category and not has_location and len(rules["regions"]) != 1:
+        supported = ", ".join(rules["regions"]) or "none yet"
+        raise HTTPException(
+            422,
+            detail=(
+                "What location should this search cover? "
+                + (
+                    f"This workspace searches in: {supported}. Name a city, "
+                    "country or region."
+                    if rules["regions"]
+                    else "Name a city, country or region."
+                )
+            ),
+        )
+
     existing = {n["id"] for n in workspace.read_niches(tenant_id)}
     niche_id = draft["id"] or _slug(draft["label"])
 
-    # Regions: the ones the drafted audience placed a location in, else every
-    # region this workspace works in.
+    # Regions: the ones the drafted audience placed a location in, else --
+    # only possible now for a workspace with exactly one region -- that one.
     located = [r for r in draft.get("locations", {}) if r in rules["regions"]]
     regions = located or list(rules["regions"])
 

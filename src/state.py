@@ -227,6 +227,13 @@ class LeadState(TypedDict, total=False):
     # -- Qualification ------------------------------------------------------ #
     fit_score: int          # 0-100
     fit_reason: str
+    #: How much of `fit_score` rests on real evidence rather than the
+    #: no-evidence floor. 1.0 is several specific, cited signals; a lead
+    #: scored purely on N3's no-evidence cap is a low number here, not the
+    #: same 1.0 as a lead with strong, specific evidence -- so a low score and
+    #: an unproven one read differently on the approval screen instead of
+    #: both looking like a confident "no".
+    fit_confidence: float    # 0.0-1.0
 
     # -- Outreach ----------------------------------------------------------- #
     channel: ChannelValue
@@ -393,6 +400,7 @@ def new_lead_state(
         "signals": [],
         "fit_score": 0,
         "fit_reason": "",
+        "fit_confidence": 0.0,
         "channel": Channel.EMAIL.value,
         "draft_message": {},
         "approval_status": ApprovalStatus.PENDING.value,
@@ -507,6 +515,13 @@ def validate_lead_state(
         elif not 0 <= score <= 100:
             problems.append(f"fit_score={score} out of range 0-100")
 
+    confidence = state.get("fit_confidence")
+    if confidence is not None:
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+            problems.append(f"fit_confidence must be a number, got {type(confidence).__name__}")
+        elif not 0.0 <= float(confidence) <= 1.0:
+            problems.append(f"fit_confidence={confidence} out of range 0.0-1.0")
+
     step = state.get("sequence_step")
     if step is not None and (
         not isinstance(step, int) or isinstance(step, bool) or step < 0
@@ -550,6 +565,10 @@ CRM_COLUMNS: tuple[str, ...] = (
     "unreachable", "needs_manual_review", "archived", "archive_reason",
     "source", "discovered_at", "sent_at", "last_touch_at", "next_touch_due",
     "last_updated",
+    # Appended, not inserted -- adding a column here must never shift the
+    # position of any column an existing Sheet/Airtable base already has a
+    # header for.
+    "fit_confidence",
 )
 
 

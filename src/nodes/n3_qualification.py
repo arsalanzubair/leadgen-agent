@@ -70,9 +70,17 @@ Known contact: {contact_name} <{contact_email}>
 A disqualifier caps the score at 19 regardless of any other signal.
 No evidence at all caps the score at 35 -- absence of evidence is not a fit.
 
+`confidence` is separate from the score: how much of it rests on specific,
+observed evidence rather than a general impression. Several concrete,
+specific signals is high confidence (0.7-1.0). A plausible guess with thin or
+generic evidence, or no evidence at all, is low confidence (0.0-0.3) even if
+the score itself is not low -- a score with no real evidence behind it must
+never look as certain as one backed by several specific signals.
+
 Return JSON only:
-{{"fit_score": <integer 0-100>, "fit_reason": "<one sentence, max 30 words, \
-citing the specific evidence that drove the score>"}}
+{{"fit_score": <integer 0-100>, "confidence": <number 0.0-1.0>, \
+"fit_reason": "<one sentence, max 30 words, citing the specific evidence \
+that drove the score>"}}
 """
 
 
@@ -109,7 +117,7 @@ def _keywords(phrase: str) -> set[str]:
     return {word for word in re.split(r"\W+", phrase.lower()) if len(word) > 3}
 
 
-def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, str]:
+def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, float, str]:
     """
     Rule-based scoring used when no LLM provider is configured.
 
@@ -117,6 +125,13 @@ def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, str]:
     describes -- overlap with the ICP's good_signals, disqualifier veto, and a
     hard cap when there is no evidence -- so a dry run produces plausible,
     explainable scores and genuinely exercises the threshold routing.
+
+    Returns `(fit_score, confidence, fit_reason)`. `confidence` is how much of
+    the score rests on real, specific evidence rather than a default: a
+    disqualifier or several matched ICP signals is high confidence; no
+    evidence at all is low confidence even though the score itself is not
+    zero -- an unproven lead must not read the same as a confidently
+    disqualified one.
     """
     icp = niche.get("icp") or {}
     signals = [str(s) for s in (state.get("signals") or [])]
@@ -124,12 +139,12 @@ def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, str]:
 
     for disqualifier in icp.get("disqualifiers") or []:
         if _keywords(str(disqualifier)) and _keywords(str(disqualifier)) <= _keywords(blob):
-            return 10, f"Disqualified: evidence matches '{disqualifier}'."
+            return 10, 0.9, f"Disqualified: evidence matches '{disqualifier}'."
     if "DISQUALIFIER found" in " ".join(signals):
-        return 10, "Disqualified: a disqualifier phrase was found on their site."
+        return 10, 0.9, "Disqualified: a disqualifier phrase was found on their site."
 
     if not signals:
-        return 20, "No signals found during enrichment; nothing to qualify on."
+        return 20, 0.1, "No signals found during enrichment; nothing to qualify on."
 
     good = [str(s) for s in (icp.get("good_signals") or [])]
     matched = [
@@ -145,6 +160,7 @@ def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, str]:
     if state.get("contact_name"):
         score += 3
     score = max(0, min(100, score))
+    confidence = max(0.0, min(1.0, 0.3 + 0.2 * len(matched)))
 
     if matched:
         reason = (
@@ -156,14 +172,14 @@ def score_offline(state: LeadState, niche: dict[str, Any]) -> tuple[int, str]:
             f"{len(signals)} signal(s) found but none map cleanly to the ICP's "
             "good-fit list."
         )
-    return score, reason[:200]
+    return score, confidence, reason[:200]
 
 
 def _mock_handler(prompt: str, context: dict) -> str:
     state: LeadState = context.get("state") or {}
     niche: dict[str, Any] = context.get("niche") or {}
-    score, reason = score_offline(state, niche)
-    return json.dumps({"fit_score": score, "fit_reason": reason})
+    score, confidence, reason = score_offline(state, niche)
+    return json.dumps({"fit_score": score, "confidence": confidence, "fit_reason": reason})
 
 
 llm.register_mock("qualification", _mock_handler)
@@ -183,6 +199,24 @@ def _coerce_score(value: Any) -> int:
     if not match:
         raise ValueError(f"fit_score {value!r} contains no number")
     return max(0, min(100, int(match.group())))
+
+
+#: Used only when a model response has no `confidence` at all -- an older
+#: prompt cache, a provider that ignores the instruction. Not itself a claim
+#: about the evidence: it means "unstated", not "moderate", so it is never
+#: presented as though the model actually weighed in on certainty.
+_DEFAULT_CONFIDENCE_WHEN_UNSTATED = 0.5
+
+
+def _coerce_confidence(value: Any) -> float:
+    """`confidence` is optional in the response; absent or unusable becomes
+    the neutral default rather than a retry or a fabricated number."""
+    if value is None or isinstance(value, bool):
+        return _DEFAULT_CONFIDENCE_WHEN_UNSTATED
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return _DEFAULT_CONFIDENCE_WHEN_UNSTATED
 
 
 @node("n3_qualification")
@@ -210,6 +244,7 @@ def n3_qualification(state: LeadState, *, tenant_config: TenantConfig | None = N
     )
 
     score = _coerce_score(parsed["fit_score"])
+    confidence = _coerce_confidence(parsed.get("confidence"))
     reason = str(parsed["fit_reason"]).strip()[:400]
     if not reason:
         reason = "Model returned no reason."
@@ -220,7 +255,9 @@ def n3_qualification(state: LeadState, *, tenant_config: TenantConfig | None = N
         score, config.fit_score_threshold, response.provider,
     )
 
-    updates: dict[str, Any] = {"fit_score": score, "fit_reason": reason}
+    updates: dict[str, Any] = {
+        "fit_score": score, "fit_confidence": confidence, "fit_reason": reason,
+    }
     if score < config.fit_score_threshold:
         updates["archived"] = True
         updates["archive_reason"] = "below_threshold"

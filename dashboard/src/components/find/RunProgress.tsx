@@ -129,6 +129,9 @@ export function RunProgress({ run }: { run: AgentRun }) {
               The search completed but found no matching businesses.
             </p>
           ) : run.low_yield_targets.length ? (
+            // Discovery itself came up thin -- broadening where you search is
+            // genuinely the fix here, unlike the case below where discovery
+            // did its job and the match bar is what filtered everything out.
             <p className="mt-3 flex items-start gap-2 text-micro text-secondary">
               <TriangleAlert size={13} className="mt-0.5 shrink-0 text-warning" />
               <span>
@@ -136,6 +139,14 @@ export function RunProgress({ run }: { run: AgentRun }) {
                 new businesses than expected. Widening the places you search, or
                 lowering your match bar, usually helps.
               </span>
+            </p>
+          ) : run.leads_discovered > 0 && run.leads_qualified === 0 ? (
+            // Discovery found real candidates; qualification is what left
+            // none standing. A different problem from "found too few", so it
+            // gets a message that does not suggest broadening the search.
+            <p className="mt-3 text-micro text-secondary">
+              {plural(run.leads_discovered, "business")} found, but none showed
+              enough evidence to match what you're looking for.
             </p>
           ) : null}
 
