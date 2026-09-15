@@ -113,6 +113,20 @@ class ProviderSpec:
     #: falls back to the Gmail address and app password, which is why its own
     #: fields are all optional. Empty means "judge it by the required fields".
     requires_any: tuple[tuple[str, ...], ...] = ()
+    #: False when a passing connection test does NOT prove the operation the
+    #: pipeline actually calls will work -- Apollo's cheap health check proves
+    #: the key is valid, not that organization or people search is available
+    #: on this account's plan; Gemini's model-listing check proves the key
+    #: works, not that GEMINI_MODEL specifically is servable by it (a
+    #: deliberate choice -- see tests/test_gemini_model.py -- since a key
+    #: valid for other models should not be refused over the one currently
+    #: configured). `src/providers/resolve.py::describe()` reports such a
+    #: provider as LIMITED rather than READY even with valid credentials,
+    #: because "the key works" and "the operation this workspace needs
+    #: works" are different claims. True for everything else: their
+    #: connection test hits the same endpoint, or an equivalent one, the
+    #: pipeline actually uses at runtime.
+    operation_verified: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +259,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         env_vars={"api_key": "GOOGLE_API_KEY"},
         essential=True,
         factory="src.providers.llm_adapters:build",
+        operation_verified=False,
     ),
     ProviderSpec(
         id="ollama",
@@ -399,6 +414,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
         env_vars={"api_key": "APOLLO_API_KEY"},
         factory="src.providers.discovery_adapters:build",
+        operation_verified=False,
     ),
     ProviderSpec(
         id="csv_import",

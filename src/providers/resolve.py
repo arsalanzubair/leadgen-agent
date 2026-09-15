@@ -306,19 +306,6 @@ def _has_credentials(spec: registry.ProviderSpec, tenant_id: str) -> bool:
     return all(resolves(name) for name in wanted)
 
 
-def _can_run(spec: registry.ProviderSpec, adapter: Any, tenant_id: str) -> bool:
-    """Whether the selected provider itself -- not a fallback -- can work."""
-    if not spec.enabled:
-        return False
-    if spec.is_custom:
-        return _is_available(adapter)
-    if spec.credential_type is registry.CredentialType.NONE:
-        return _is_available(adapter)
-    if not _has_credentials(spec, tenant_id):
-        return False
-    return _is_available(adapter)
-
-
 def provider_for(
     capability: Capability | str,
     config: TenantConfig | None = None,
@@ -551,6 +538,64 @@ def translation_for(config: TenantConfig | None = None, **kwargs: Any) -> Any:
 # Description, for the settings service
 # --------------------------------------------------------------------------- #
 
+#: Every status `describe()` can report. A Connections screen that only knows
+#: true/false cannot say "the key is valid but the plan does not cover this
+#: operation" -- which is exactly the state that used to show as "Connected"
+#: right up until a batch ran and discovered nothing.
+READINESS_STATES = ("READY", "LIMITED", "NOT_READY", "NOT_CONFIGURED")
+
+
+def _readiness(
+    spec: registry.ProviderSpec | None, adapter: Any, tenant_id: str
+) -> tuple[str, str]:
+    """
+    Credential health, capability health and operation health, as one of four
+    states rather than one boolean.
+
+      NOT_CONFIGURED  no credential has been connected for a provider that
+                      needs one -- there is nothing to be wrong with yet.
+      NOT_READY       a credential exists but the adapter reports it cannot
+                      make a real call right now (a structural problem, not a
+                      plan limitation -- e.g. a custom endpoint with no
+                      reachable URL).
+      LIMITED         credentials are valid and the adapter is available, but
+                      the connection test that proved the key works does not
+                      prove the SPECIFIC operation this workspace calls at
+                      runtime also works -- see `ProviderSpec.operation_verified`.
+      READY           credentials are valid (or none are needed) and the
+                      operation this workspace actually calls has been proven,
+                      by the same or an equivalent check.
+
+    A provider that fails outright at the moment of use (a live 403, a
+    timeout) still surfaces through the normal `ProviderResult`/run-record
+    path -- this function describes the STATIC, always-safe-to-compute state
+    for a Settings page load, not a live probe of the real operation, which
+    would mean spending a paid provider's quota every time the page opens.
+    """
+    if spec is None:
+        return "NOT_CONFIGURED", "Nothing is connected for this yet."
+    if (
+        spec.credential_type is not registry.CredentialType.NONE
+        and not _has_credentials(spec, tenant_id)
+    ):
+        return (
+            "NOT_CONFIGURED",
+            f"{spec.display_name} needs to be connected in Settings before this can run.",
+        )
+    if not _is_available(adapter):
+        return (
+            "NOT_READY",
+            f"{spec.display_name} is selected but cannot run right now.",
+        )
+    if not spec.operation_verified:
+        return (
+            "LIMITED",
+            f"{spec.display_name}'s connection is valid, but the specific "
+            "operation this workspace needs has not been verified and may "
+            "not be available on this account or plan.",
+        )
+    return "READY", f"{spec.display_name} is connected and ready."
+
 
 def describe(config: TenantConfig | None = None) -> dict[str, dict[str, Any]]:
     """
@@ -570,10 +615,10 @@ def describe(config: TenantConfig | None = None) -> dict[str, dict[str, Any]]:
             adapter = provider_for(
                 capability, config, require_available=False, tenant_id=tenant_id,
             )
-            ready = spec is not None and _can_run(spec, adapter, tenant_id)
+            status, status_message = _readiness(spec, adapter, tenant_id)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not describe %s: %s", capability.value, exc)
-            ready = False
+            status, status_message = "NOT_READY", "This provider's status could not be checked."
 
         out[capability.value] = {
             "capability": capability.value,
@@ -582,7 +627,11 @@ def describe(config: TenantConfig | None = None) -> dict[str, dict[str, Any]]:
             "primary_name": spec.display_name if spec else selection.primary,
             "fallback": selection.fallback,
             "chosen_by": selection.source,
-            "ready": ready,
+            # Kept for callers that only ever asked true/false; `status` is
+            # the real answer and the only thing new code should read.
+            "ready": status == "READY",
+            "status": status,
+            "status_message": status_message,
             "settings": {
                 key: value
                 for key, value in selection.options.items()

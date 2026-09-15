@@ -191,6 +191,23 @@ export interface CapabilityGroup {
   providers: Connection[];
 }
 
+/**
+ * Credential health, capability health and operation health, as one of four
+ * states rather than a single "connected" boolean.
+ *
+ *   READY           the chosen provider is connected and the operation this
+ *                    workspace needs has actually been verified.
+ *   LIMITED          the connection is valid, but the connection test that
+ *                    proved the key works does not prove the SPECIFIC
+ *                    operation this workspace calls also works -- e.g.
+ *                    Apollo's key check does not prove organization/people
+ *                    search is on this account's plan.
+ *   NOT_READY        credentials exist but the provider cannot make a real
+ *                    call right now.
+ *   NOT_CONFIGURED   nothing has been connected for this yet.
+ */
+export type ReadinessStatus = "READY" | "LIMITED" | "NOT_READY" | "NOT_CONFIGURED";
+
 /** What this workspace has chosen for one job. */
 export interface ProviderSelection {
   capability: Capability;
@@ -205,8 +222,13 @@ export interface ProviderSelection {
    * "Technical details" so "why is it using this one" has an answer.
    */
   chosen_by: string;
-  /** True when the chosen provider has what it needs to actually run. */
+  /** True only when `status` is "READY". Kept for callers that only need a
+   * yes/no; `status` is the real answer. */
   ready: boolean;
+  /** The four-state health described above. */
+  status: ReadinessStatus;
+  /** One sentence explaining `status`, in plain language. */
+  status_message: string;
   /**
    * Non-secret configuration for a custom endpoint: URL, auth style, model.
    * Never contains a key -- the API refuses to store one here.

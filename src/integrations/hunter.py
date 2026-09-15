@@ -24,11 +24,13 @@ from dataclasses import dataclass
 import requests
 
 from src.counters import QuotaExceeded, hunter_counter
+from src.providers.results import ProviderError, classify_exception, classify_http_status
 from src.reliability import log, retry_once
 from src.settings import env
 
 DOMAIN_SEARCH_URL = "https://api.hunter.io/v2/domain-search"
 EMAIL_FINDER_URL = "https://api.hunter.io/v2/email-finder"
+_OPERATION = "email_finder"
 
 #: Hunter's own confidence score below which we would rather send nothing.
 #: A bounced cold email costs sender reputation, which is far more expensive
@@ -64,15 +66,20 @@ def quota_status() -> str:
 
 
 def _domain_search(domain: str) -> HunterResult | None:
-    response = requests.get(
-        DOMAIN_SEARCH_URL,
-        params={"domain": domain, "api_key": env("HUNTER_API_KEY"), "limit": 10},
-        timeout=30,
-    )
-    if response.status_code == 429:
-        raise RuntimeError("Hunter rate limit hit (429)")
+    try:
+        response = requests.get(
+            DOMAIN_SEARCH_URL,
+            params={"domain": domain, "api_key": env("HUNTER_API_KEY"), "limit": 10},
+            timeout=30,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="hunter", operation=_OPERATION) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="hunter", operation=_OPERATION) from exc
     if response.status_code != 200:
-        raise RuntimeError(f"Hunter returned {response.status_code}: {response.text[:200]}")
+        raise classify_http_status(
+            response.status_code, response.text, provider="hunter", operation=_OPERATION,
+        )
 
     payload = response.json().get("data") or {}
     emails = payload.get("emails") or []
@@ -99,18 +106,25 @@ def _domain_search(domain: str) -> HunterResult | None:
 
 
 def _email_finder(domain: str, first_name: str, last_name: str) -> HunterResult | None:
-    response = requests.get(
-        EMAIL_FINDER_URL,
-        params={
-            "domain": domain,
-            "first_name": first_name,
-            "last_name": last_name,
-            "api_key": env("HUNTER_API_KEY"),
-        },
-        timeout=30,
-    )
+    try:
+        response = requests.get(
+            EMAIL_FINDER_URL,
+            params={
+                "domain": domain,
+                "first_name": first_name,
+                "last_name": last_name,
+                "api_key": env("HUNTER_API_KEY"),
+            },
+            timeout=30,
+        )
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="hunter", operation=_OPERATION) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="hunter", operation=_OPERATION) from exc
     if response.status_code != 200:
-        raise RuntimeError(f"Hunter returned {response.status_code}: {response.text[:200]}")
+        raise classify_http_status(
+            response.status_code, response.text, provider="hunter", operation=_OPERATION,
+        )
     payload = response.json().get("data") or {}
     email = (payload.get("email") or "").lower()
     if not email:
@@ -162,9 +176,16 @@ def find_email(
             result = retry_once(_domain_search, domain, _label="hunter_domain_search")
     except Exception as exc:  # noqa: BLE001
         # A failed call may still have been billed; count it rather than risk
-        # overrunning the free plan.
+        # overrunning the free plan. `find_email` still returns None for
+        # every failure reason -- see the docstring -- but a rejected key, a
+        # rate limit and a timeout are now classified with the same
+        # vocabulary every other provider uses, so this line names the real
+        # reason rather than a bare exception repr.
         counter.consume(1)
-        log.warning("Hunter lookup failed for %s (%s); counted against quota", domain, exc)
+        reason = exc.code.value if isinstance(exc, ProviderError) else exc.__class__.__name__
+        log.warning(
+            "Hunter lookup failed for %s (%s: %s); counted against quota", domain, reason, exc,
+        )
         return None
 
     used = counter.consume(1)

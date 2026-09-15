@@ -294,6 +294,185 @@ def test_places_query_building():
     assert places.build_query("dental clinic", "Manchester") == "dental clinic in Manchester"
 
 
+# --------------------------------------------------------------------------- #
+# Structured OSM discovery -- Overpass, for a category the table recognises
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture(autouse=True)
+def _no_nominatim_throttle(monkeypatch):
+    """
+    `_geocode_area_id` calls the real 1-req/sec throttle. These tests mock the
+    network, but there is no reason to also make the suite sleep for it.
+    """
+    monkeypatch.setattr(places, "_nominatim_throttle", lambda: None)
+
+
+def _geocode_response(osm_type="relation", osm_id=62422):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [{"osm_type": osm_type, "osm_id": osm_id}] if osm_id else []
+
+    return Response()
+
+
+def _overpass_response(elements):
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"elements": elements}
+
+    return Response()
+
+
+def test_a_recognised_category_runs_a_structured_overpass_query(monkeypatch):
+    captured = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["geocode_params"] = params
+        return _geocode_response()
+
+    def fake_post(url, data=None, timeout=None):
+        captured["overpass_url"] = url
+        captured["overpass_query"] = data["data"]
+        return _overpass_response([
+            {"tags": {
+                "name": "Berlin Dental Care", "amenity": "dentist",
+                "website": "https://berlin-dental.example",
+                "phone": "+49 30 1234567",
+                "addr:street": "Hauptstrasse", "addr:housenumber": "12",
+                "addr:city": "Berlin",
+            }},
+        ])
+
+    monkeypatch.setattr(places.requests, "get", fake_get)
+    monkeypatch.setattr(places.requests, "post", fake_post)
+
+    result = places.search_local_structured("dental clinic", "Berlin")
+
+    assert result.ok
+    assert result.metadata["structured"] is True
+    assert captured["geocode_params"]["q"] == "Berlin"
+    assert captured["overpass_url"] == places.OVERPASS_URL
+    assert '"amenity"="dentist"' in captured["overpass_query"]
+    assert "area(3600062422)" in captured["overpass_query"]
+    lead = result.data[0]
+    assert lead.name == "Berlin Dental Care"
+    assert lead.website == "https://berlin-dental.example"
+    assert lead.phone == "+49 30 1234567"
+    assert lead.category == "dentist"
+    assert "Hauptstrasse" in lead.address and "Berlin" in lead.address
+    assert lead.source == "osm"
+
+
+def test_an_unmapped_category_never_calls_overpass_at_all(monkeypatch):
+    def overpass_must_not_run(*args, **kwargs):
+        raise AssertionError("an unmapped category must use free text, not Overpass")
+
+    monkeypatch.setattr(places.requests, "post", overpass_must_not_run)
+    monkeypatch.setattr(
+        places, "_search_nominatim",
+        lambda query, limit: [places.PlaceResult(name="Whatever Co", source="osm")],
+    )
+
+    result = places.search_local_structured("underwater basket weaving supplier", "Berlin")
+
+    assert result.ok
+    assert result.data[0].name == "Whatever Co"
+    assert "structured" not in result.metadata
+
+
+def test_a_geocoding_failure_falls_back_to_free_text_not_a_silent_empty(monkeypatch):
+    """
+    Nominatim could not resolve "Berlin" to an area at all (an implausible but
+    real case for a typo'd or invented place name). Overpass has nothing to
+    search inside, so this degrades to free text rather than the search
+    disappearing.
+    """
+    monkeypatch.setattr(
+        places.requests, "get",
+        lambda *a, **k: _geocode_response(osm_id=None),
+    )
+
+    def overpass_must_not_run(*args, **kwargs):
+        raise AssertionError("Overpass must not be queried with no area to search")
+
+    monkeypatch.setattr(places.requests, "post", overpass_must_not_run)
+    monkeypatch.setattr(
+        places, "_search_nominatim",
+        lambda query, limit: [places.PlaceResult(name="Fallback Co", source="osm")],
+    )
+
+    result = places.search_local_structured("dental clinic", "Nonexistentville")
+
+    assert result.ok
+    assert result.data[0].name == "Fallback Co"
+    assert result.metadata.get("overpass_error") == "bad_response"
+
+
+def test_overpass_itself_failing_falls_back_to_free_text_and_records_it(monkeypatch):
+    """
+    The area resolved fine; Overpass itself is down. Same degrade-and-record
+    behaviour as a Google Places failure falling back to OSM -- the original
+    failure is not hidden, just not fatal.
+    """
+    monkeypatch.setattr(places.requests, "get", lambda *a, **k: _geocode_response())
+
+    class BrokenResponse:
+        status_code = 503
+        text = "overpass overloaded"
+
+    monkeypatch.setattr(places.requests, "post", lambda *a, **k: BrokenResponse())
+    monkeypatch.setattr(
+        places, "_search_nominatim",
+        lambda query, limit: [places.PlaceResult(name="Fallback Co", source="osm")],
+    )
+
+    result = places.search_local_structured("dental clinic", "Berlin")
+
+    assert result.ok
+    assert result.data[0].name == "Fallback Co"
+    assert result.metadata["overpass_error"] == "provider_unavailable"
+
+
+def test_overpass_returning_zero_elements_is_a_genuine_empty_result(monkeypatch):
+    """Overpass answered; there was nobody tagged that way here. SUCCESS_EMPTY,
+    not an error -- the whole distinction this reliability layer exists for."""
+    from src.providers.results import ProviderStatus
+
+    monkeypatch.setattr(places.requests, "get", lambda *a, **k: _geocode_response())
+    monkeypatch.setattr(places.requests, "post", lambda *a, **k: _overpass_response([]))
+
+    result = places.search_local_structured("dental clinic", "Berlin")
+
+    assert result.ok
+    assert result.status is ProviderStatus.SUCCESS_EMPTY
+    assert result.data == []
+
+
+def test_overpass_drops_unnamed_elements(monkeypatch):
+    """A bench or a bin tagged the same way as the searched category is not a lead."""
+    monkeypatch.setattr(places.requests, "get", lambda *a, **k: _geocode_response())
+    monkeypatch.setattr(
+        places.requests, "post",
+        lambda *a, **k: _overpass_response([
+            {"tags": {"amenity": "dentist"}},  # no name
+            {"tags": {"name": "Real Practice", "amenity": "dentist"}},
+        ]),
+    )
+
+    result = places.search_local_structured("dental clinic", "Berlin")
+
+    assert result.ok
+    assert len(result.data) == 1
+    assert result.data[0].name == "Real Practice"
+
+
 def test_permanently_closed_detection():
     assert not places.PlaceResult(name="X", business_status="CLOSED_PERMANENTLY").is_open
     assert places.PlaceResult(name="X", business_status="OPERATIONAL").is_open

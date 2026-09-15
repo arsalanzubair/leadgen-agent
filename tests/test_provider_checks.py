@@ -925,17 +925,64 @@ def test_a_custom_endpoint_that_does_not_know_the_ping_still_passes(resolvable_u
 
 @pytest.mark.parametrize(
     "provider_id",
-    ["osm", "csv_import", "website_only", "csv", "dry_run", "none", "mock", "llm"],
+    ["csv_import", "website_only", "csv", "dry_run", "none", "mock", "llm"],
 )
 def test_a_credential_free_provider_reports_ready_without_calling_out(provider_id: str):
     """
     A fake network call here would be worse than none: it would make an
     always-available option look like it could fail.
+
+    OSM is deliberately NOT in this list even though it needs no key either:
+    unlike these -- reading a website that is already being scraped, a CSV
+    folder, or nothing at all -- OSM has a real external dependency
+    (Nominatim) that can genuinely be unreachable independent of anything the
+    user configured, so "no key needed" must not be read as "always healthy".
+    See `test_osm_check_*` below.
     """
     with respx.mock:
         result = run_check(provider_id, {})
     assert result.ok
     assert "no account and no key" in result.detail
+
+
+def test_osm_check_confirms_it_can_actually_reach_nominatim(monkeypatch):
+    """
+    "No key needed" is not the same claim as "reachable right now" -- this
+    runs one real free-text search through the same function the `osm`
+    discovery provider itself falls back to, so a passing check is evidence
+    the underlying capability actually works, not just that nothing was asked
+    of it.
+    """
+    from src.integrations import places
+
+    monkeypatch.setattr(
+        places, "search_osm_only",
+        lambda query, limit=20: places.ProviderResult.success(
+            "osm", "discover_local", [places.PlaceResult(name="London Bridge", source="osm")],
+        ),
+    )
+    result = run_check("osm", {})
+    assert result.ok
+    assert "answered normally" in result.detail
+
+
+def test_osm_check_reports_a_real_outage_honestly(monkeypatch):
+    from src.integrations import places
+    from src.providers.results import ErrorCode, ProviderError
+
+    monkeypatch.setattr(
+        places, "search_osm_only",
+        lambda query, limit=20: places.ProviderResult.failure(
+            ProviderError(
+                ErrorCode.PROVIDER_UNAVAILABLE, provider="osm", operation="discover_local",
+                message="nominatim down", user_message="OpenStreetMap is not responding.",
+            ),
+            data=[],
+        ),
+    )
+    result = run_check("osm", {})
+    assert not result.ok
+    assert result.detail == "OpenStreetMap is not responding."
 
 
 def test_every_provider_needing_a_credential_has_a_real_check():

@@ -117,6 +117,50 @@ def test_dedupe_respects_the_persisted_ledger():
     assert again == [] and dropped_again == 3
 
 
+def test_dedupe_collapses_the_same_business_found_by_two_different_providers():
+    """
+    OSM and Google Places (or Apollo's CSV top-up and its API results) can
+    each independently discover the same real business. `deduplicate` has no
+    concept of "provider" at all -- it matches on domain, then on normalised
+    name + location -- so two rows with different `source` values but the
+    same underlying business still collapse to one lead. This is what makes
+    combining providers in one batch safe rather than something that
+    silently doubles a company's outreach.
+    """
+    from_osm = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="local_dental", region="UK",
+        company_name="Bright Smile Dental", website="https://bright-smile.co.uk",
+        location="Manchester", source="osm",
+    )
+    from_google = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="local_dental", region="UK",
+        company_name="Bright Smile Dental Practice",
+        website="https://www.bright-smile.co.uk/home",
+        location="Manchester", source="google_places",
+    )
+    fresh, dropped = deduplicate(EXAMPLE, [from_osm, from_google], seen={})
+    assert len(fresh) == 1
+    assert dropped == 1
+
+
+def test_dedupe_does_not_merge_genuinely_different_businesses():
+    """The other half of the same guarantee: two unrelated companies must
+    never collapse just because both showed up in the same batch."""
+    first = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="local_dental", region="UK",
+        company_name="Bright Smile Dental", website="https://bright-smile.co.uk",
+        location="Manchester", source="osm",
+    )
+    second = new_lead_state(
+        tenant_id=EXAMPLE, niche_id="local_dental", region="UK",
+        company_name="Northgate Family Dentistry", website="https://northgate-dental.co.uk",
+        location="Leeds", source="google_places",
+    )
+    fresh, dropped = deduplicate(EXAMPLE, [first, second], seen={})
+    assert len(fresh) == 2
+    assert dropped == 0
+
+
 def test_dedupe_ledger_is_per_tenant(tmp_path):
     """Tenant A having seen a company must not hide it from tenant B."""
     lead_a = new_lead_state(
@@ -243,13 +287,14 @@ def test_a_discovery_failure_is_reported_not_swallowed(config, monkeypatch):
 def test_local_discovery_uses_places(config, monkeypatch):
     """
     example_tenant's local_dental niche is served by `osm` by default, which
-    now calls `places.search_osm_only` -- never `places.search` (the
-    Google-preferring combined path), since that one belongs to the separate
-    `google_places` provider tested below.
+    now calls `places.search_local_structured` (Overpass for a recognised
+    category, falling back to free text otherwise) -- never `places.search`
+    (the Google-preferring combined path), since that one belongs to the
+    separate `google_places` provider tested below.
     """
     monkeypatch.setattr(
-        places, "search_osm_only",
-        lambda query, limit=20: ProviderResult.success(
+        places, "search_local_structured",
+        lambda term, location, limit=20: ProviderResult.success(
             "osm", "discover_local",
             [
                 places.PlaceResult(
@@ -277,8 +322,8 @@ def test_local_discovery_uses_places(config, monkeypatch):
 
 def test_permanently_closed_places_are_dropped(config, monkeypatch):
     monkeypatch.setattr(
-        places, "search_osm_only",
-        lambda query, limit=20: ProviderResult.success(
+        places, "search_local_structured",
+        lambda term, location, limit=20: ProviderResult.success(
             "osm", "discover_local",
             [places.PlaceResult(name="Gone", business_status="CLOSED_PERMANENTLY")],
         ),
@@ -336,8 +381,8 @@ def test_google_maps_without_a_key_falls_back_to_osm(config, monkeypatch):
     monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
 
     monkeypatch.setattr(
-        places, "search_osm_only",
-        lambda query, limit=20: ProviderResult.success(
+        places, "search_local_structured",
+        lambda term, location, limit=20: ProviderResult.success(
             "osm", "discover_local",
             [places.PlaceResult(name="Bright Smile", source="osm")],
         ),
@@ -681,6 +726,65 @@ def test_hunter_find_email_returns_none_when_quota_is_spent(monkeypatch):
     monkeypatch.setattr(hunter, "_domain_search", explode)
     monkeypatch.setattr(hunter, "_email_finder", explode)
     assert hunter.find_email("acme.co.uk") is None
+
+
+def test_hunter_invalid_key_is_classified_and_still_returns_none(monkeypatch, caplog):
+    """
+    `find_email` never raises -- that contract is deliberate and unchanged --
+    but the reason it swallows must be diagnosable. A rejected key is now
+    classified with the same vocabulary every other provider uses, not a bare
+    RuntimeError, so the log line names AUTH_ERROR rather than "RuntimeError".
+    """
+    import logging
+
+    from src.providers.results import ErrorCode
+
+    monkeypatch.setenv("HUNTER_API_KEY", "wrong-key")
+    Counter("hunter_lookups", cap=25, period="month").reset()
+
+    class Response:
+        status_code = 401
+        text = '{"errors": [{"details": "invalid api key"}]}'
+
+    monkeypatch.setattr(hunter.requests, "get", lambda *a, **k: Response())
+    with caplog.at_level(logging.WARNING):
+        assert hunter.find_email("acme.co.uk") is None
+    assert ErrorCode.AUTH_ERROR.value in caplog.text
+
+
+def test_hunter_rate_limit_is_classified_as_retryable(monkeypatch):
+    from src.providers.results import ErrorCode
+
+    monkeypatch.setenv("HUNTER_API_KEY", "fake-key")
+
+    class Response:
+        status_code = 429
+        text = "rate limited"
+        headers: dict[str, str] = {}
+
+    monkeypatch.setattr(hunter.requests, "get", lambda *a, **k: Response())
+    try:
+        hunter._domain_search("acme.co.uk")
+        raise AssertionError("expected a ProviderError")
+    except hunter.ProviderError as exc:
+        assert exc.code is ErrorCode.RATE_LIMITED
+        assert exc.retryable is True
+
+
+def test_hunter_network_failure_is_classified_not_a_bare_exception(monkeypatch):
+    from src.providers.results import ErrorCode
+
+    monkeypatch.setenv("HUNTER_API_KEY", "fake-key")
+
+    def explode(*args, **kwargs):
+        raise hunter.requests.exceptions.ConnectionError("dns failure")
+
+    monkeypatch.setattr(hunter.requests, "get", explode)
+    try:
+        hunter._domain_search("acme.co.uk")
+        raise AssertionError("expected a ProviderError")
+    except hunter.ProviderError as exc:
+        assert exc.code is ErrorCode.NETWORK_ERROR
 
 
 def test_hunter_low_confidence_result_is_discarded(monkeypatch):

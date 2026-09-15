@@ -106,12 +106,15 @@ def _run_local_search(
     provider_id: str,
 ) -> ProviderResult[list[DiscoveredBusiness]]:
     """
-    Shared by every local-business adapter: build one query per
-    (search_term, location) pair, run it through whichever vendor function the
-    caller passes, and fold the results into `DiscoveredBusiness`. The only
-    thing that differs between OpenStreetMap and Google Maps is which function
-    answers each query and which id gets recorded -- everything else, right
-    down to the wording of the "nothing to search on" error, is identical.
+    Shared by every local-business adapter: run one (search_term, location)
+    pair at a time through whichever vendor function the caller passes, and
+    fold the results into `DiscoveredBusiness`. `search_fn` takes `(term,
+    location, limit)` -- not a pre-joined query string -- so OpenStreetMap's
+    adapter can hand the category to a structured, tag-based search rather
+    than always falling back to free text. The only thing that differs
+    between OpenStreetMap and Google Maps is which function answers each pair
+    and which id gets recorded -- everything else, right down to the wording
+    of the "nothing to search on" error, is identical.
     """
     # No category or nowhere to look is not "zero businesses" -- it is
     # nothing having been asked. Looping over an empty list here used to
@@ -139,12 +142,11 @@ def _run_local_search(
     errors: list[ProviderError] = []
     for term in request.search_terms:
         for location in request.locations:
-            query = places.build_query(term, location)
             log.info(
-                "discovery niche=%s region=%s query=%r provider=%s",
-                request.niche_id, request.region, query, provider_id,
+                "discovery niche=%s region=%s term=%r location=%r provider=%s",
+                request.niche_id, request.region, term, location, provider_id,
             )
-            result = search_fn(query, limit=request.limit)
+            result = search_fn(term, location, request.limit)
             if result.ok:
                 found.extend(_from_place(p) for p in result.data)
             else:
@@ -183,7 +185,9 @@ class LocalSearchDiscovery:
         return True
 
     def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
-        return _run_local_search(request, search_fn=places.search_osm_only, provider_id="osm")
+        return _run_local_search(
+            request, search_fn=places.search_local_structured, provider_id="osm"
+        )
 
 
 class GoogleMapsDiscovery:
@@ -212,7 +216,10 @@ class GoogleMapsDiscovery:
         return places.has_google_key()
 
     def find(self, request: DiscoveryRequest) -> ProviderResult[list[DiscoveredBusiness]]:
-        return _run_local_search(request, search_fn=places.search, provider_id="google_places")
+        def search_fn(term: str, location: str, limit: int) -> ProviderResult:
+            return places.search(places.build_query(term, location), limit=limit)
+
+        return _run_local_search(request, search_fn=search_fn, provider_id="google_places")
 
 
 # --------------------------------------------------------------------------- #

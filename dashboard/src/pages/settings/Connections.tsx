@@ -19,16 +19,22 @@
  * Nothing on this screen ever displays a saved key. See ConnectionRow.
  */
 
-import { KeyRound, Lock, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, Loader2, Lock, ShieldCheck, TriangleAlert, Zap } from "lucide-react";
 import * as React from "react";
 
 import { ConnectionRow } from "@/components/settings/ConnectionRow";
 import { PageHeader } from "@/components/layout/AppShell";
-import { Card } from "@/components/ui/primitives";
+import { Button, Card } from "@/components/ui/primitives";
 import { EmptyState, ErrorState, InlineError, SkeletonCards } from "@/components/ui/states";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { cn } from "@/lib/utils";
 import { workspace } from "@/services";
-import type { CapabilityGroup, Connection, SelectionMap } from "@/types/workspace";
+import type {
+  CapabilityGroup,
+  Connection,
+  ConnectionTestResult,
+  SelectionMap,
+} from "@/types/workspace";
 
 /**
  * The sections, in order, and which providers appear under each.
@@ -237,26 +243,47 @@ export function ConnectionsPage() {
                 <p className="mt-1 text-meta text-tertiary">{section.hint}</p>
 
                 <ul className="mt-4 space-y-2.5">
-                  {rows.map((provider) => (
-                    <li key={`${section.title}-${provider.id}`}>
-                      {provider.fields.length === 0 ? (
-                        <NoSetupRow provider={provider} />
-                      ) : (
-                        <ConnectionRow
-                          connection={provider}
-                          disabled={offline}
-                          onTest={(values) =>
-                            workspace.testConnection(provider.id, values)
-                          }
-                          onSave={(values) => connect(provider, values)}
-                          onDisconnect={async () => {
-                            await workspace.deleteConnection(provider.id);
-                            await refresh();
-                          }}
-                        />
-                      )}
-                    </li>
-                  ))}
+                  {rows.map((provider) => {
+                    // Only for the provider actually chosen to do this job --
+                    // a connected-but-not-selected key makes no claim about
+                    // what the workspace's runs actually use, so it earns no
+                    // status note here.
+                    const chosen = selection[provider.category];
+                    const limited =
+                      provider.state === "connected" &&
+                      chosen?.primary === provider.id &&
+                      chosen.status !== "READY";
+
+                    return (
+                      <li key={`${section.title}-${provider.id}`}>
+                        {provider.fields.length === 0 ? (
+                          <NoSetupRow
+                            provider={provider}
+                            onTest={() => workspace.testConnection(provider.id, {})}
+                          />
+                        ) : (
+                          <ConnectionRow
+                            connection={provider}
+                            disabled={offline}
+                            onTest={(values) =>
+                              workspace.testConnection(provider.id, values)
+                            }
+                            onSave={(values) => connect(provider, values)}
+                            onDisconnect={async () => {
+                              await workspace.deleteConnection(provider.id);
+                              await refresh();
+                            }}
+                          />
+                        )}
+                        {limited ? (
+                          <p className="mt-1.5 flex items-start gap-2 px-1 text-micro text-warning">
+                            <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+                            {chosen.status_message}
+                          </p>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             );
@@ -273,20 +300,78 @@ export function ConnectionsPage() {
  * It gets a row rather than being hidden, because "there is a free option here
  * that needs nothing from you" is the single most useful thing this screen can
  * tell somebody who has just arrived and connected nothing.
+ *
+ * "No signup needed" is not the same claim as "working right now" -- a badge
+ * that never changes regardless of whether the service behind it can
+ * actually be reached would be exactly the fake-connected state this screen
+ * exists to avoid. The Test button runs the same real check every other
+ * provider gets; for one that genuinely has nothing to verify (reading a
+ * website, a CSV folder) the backend says so honestly rather than this row
+ * pretending to have asked.
  */
-function NoSetupRow({ provider }: { provider: Connection }) {
+function NoSetupRow({
+  provider,
+  onTest,
+}: {
+  provider: Connection;
+  onTest: () => Promise<ConnectionTestResult>;
+}) {
+  const [testing, setTesting] = React.useState(false);
+  const [result, setResult] = React.useState<ConnectionTestResult | null>(null);
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      setResult(await onTest());
+    } catch (err) {
+      setResult({
+        ok: false,
+        message: err instanceof Error ? err.message : "The check could not be run.",
+        detail: "",
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-bg px-4 py-3.5">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success-muted">
-        <ShieldCheck size={17} className="text-success" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-meta font-semibold text-primary">{provider.name}</p>
-        <p className="mt-0.5 text-micro text-tertiary">{provider.purpose}</p>
+    <div className="rounded-card border border-border bg-bg px-4 py-3.5">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success-muted">
+          <ShieldCheck size={17} className="text-success" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-meta font-semibold text-primary">{provider.name}</p>
+          <p className="mt-0.5 text-micro text-tertiary">{provider.purpose}</p>
+        </div>
+        <span className="shrink-0 rounded-control border border-border bg-surface-raised px-2.5 py-1 text-micro text-secondary">
+          No signup needed
+        </span>
+        <Button variant="secondary" size="sm" onClick={() => void test()} disabled={testing}>
+          {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+          Test
+        </Button>
       </div>
-      <span className="shrink-0 rounded-control border border-border bg-surface-raised px-2.5 py-1 text-micro text-secondary">
-        No signup needed
-      </span>
+      {result ? (
+        <p
+          className={cn(
+            "mt-2.5 flex items-start gap-2 rounded-control border px-3 py-2 text-micro",
+            result.ok
+              ? "border-success/30 bg-success-muted text-success"
+              : "border-danger/30 bg-danger-muted text-danger",
+          )}
+        >
+          {result.ok ? (
+            <Check size={13} className="mt-0.5 shrink-0" />
+          ) : (
+            <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+          )}
+          <span>
+            {result.message}
+            {result.detail ? <span className="mt-0.5 block opacity-80">{result.detail}</span> : null}
+          </span>
+        </p>
+      ) : null}
     </div>
   );
 }

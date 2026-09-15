@@ -527,6 +527,32 @@ def _check_google_places(values: dict[str, str]) -> TestResult:
     )
 
 
+def _check_osm(values: dict[str, str]) -> TestResult:
+    """
+    OpenStreetMap needs no key, but "no key" is not the same claim as
+    "reachable and answering" -- a genuinely down or unreachable Nominatim
+    would otherwise show as unconditionally healthy forever. This runs one
+    real free-text search, through the exact function `LocalSearchDiscovery`
+    falls back to, using the same 1-request-per-second throttle every real
+    search already honours -- it spends one of those requests, not a
+    separate budget.
+    """
+    from src.integrations import places
+
+    try:
+        result = places.search_osm_only("London", limit=1)
+    except Exception as exc:  # noqa: BLE001 - a network client can raise anything
+        return TestResult(
+            False, "OpenStreetMap could not be reached.",
+            f"{exc.__class__.__name__}: {exc}",
+        )
+
+    if not result.ok:
+        detail = result.error.user_message if result.error else ""
+        return TestResult(False, "OpenStreetMap's search service is not responding correctly.", detail)
+    return TestResult(True, "Reachable.", "OpenStreetMap's search service answered normally.")
+
+
 def _check_ollama(values: dict[str, str]) -> TestResult:
     """A model running on this machine. Lists what is installed."""
     base = (values.get("base_url", "").strip() or "http://localhost:11434").rstrip("/")
@@ -855,6 +881,7 @@ CHECKS: dict[str, Callable[[dict[str, str]], TestResult]] = {
     "ollama": _check_ollama,
     "apollo": _check_apollo,
     "hunter": _check_hunter,
+    "osm": _check_osm,
     "google_places": _check_google_places,
     "gmail_smtp": _check_gmail,
     "brevo": _check_brevo,

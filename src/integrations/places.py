@@ -3,10 +3,17 @@ places.py -- local business discovery.
 
 Google Places API (New) Text Search when GOOGLE_PLACES_API_KEY is set, guarded
 by a durable monthly request counter so the free credit cannot be silently
-blown through. OpenStreetMap / Nominatim is the no-key fallback and honours
-their usage policy: one request per second, descriptive User-Agent.
+blown through. OpenStreetMap is the no-key option, and is not just Nominatim's
+free-text search: `search_local_structured` looks a category up in
+`osm_categories` first and runs a structured Overpass query against the
+matching tag when one exists (`amenity=dentist`, `shop=hairdresser`, ...),
+falling back to Nominatim's free text only for a category that table does not
+recognise. Both OSM paths honour Nominatim's usage policy wherever they touch
+it (geocoding an area for Overpass is still a Nominatim request): one request
+per second, descriptive User-Agent.
 
-Both return the same `PlaceResult` shape, so N1 does not branch on provider.
+Every path returns the same `PlaceResult` shape, so N1 does not branch on
+provider or on which OSM path answered.
 
 Env: GOOGLE_PLACES_API_KEY, GOOGLE_PLACES_MONTHLY_REQUEST_CAP,
      NOMINATIM_USER_AGENT
@@ -221,17 +228,191 @@ def _search_nominatim(query: str, limit: int) -> list[PlaceResult]:
     return results
 
 
+# --------------------------------------------------------------------------- #
+# Structured OSM discovery -- Overpass, for a category this table recognises
+# --------------------------------------------------------------------------- #
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+_OVERPASS_OP = "discover_local"
+
+#: Overpass area ids for a relation are the relation's OSM id plus this
+#: offset -- a fixed convention of the API, not a guess. https://overpass-api.de
+#: (query language reference, "by id") documents `area(3600000000 + id)`.
+_OVERPASS_RELATION_AREA_OFFSET = 3_600_000_000
+
+
+def _geocode_area_id(location: str) -> int | None:
+    """
+    Resolve a place name to an Overpass area id, via the same Nominatim search
+    (and the same 1-req/sec throttle) `_search_nominatim` already respects --
+    this spends one of those requests, not a separate budget.
+
+    `None` means Nominatim did not resolve the name to an administrative area
+    at all (a relation) -- a street address or a business name would not
+    produce one, and the caller falls back to free-text search rather than
+    querying Overpass with nothing to search inside.
+    """
+    _nominatim_throttle()
+    response = requests.get(
+        NOMINATIM_SEARCH_URL,
+        params={"q": location, "format": "jsonv2", "limit": 1},
+        headers={"User-Agent": env("NOMINATIM_USER_AGENT", "leadgen-agent/0.1")},
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise classify_http_status(
+            response.status_code, response.text, provider="osm", operation=_OVERPASS_OP,
+        )
+    try:
+        results = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="osm", operation=_OVERPASS_OP,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
+
+    if not results:
+        return None
+    match = results[0]
+    if match.get("osm_type") != "relation" or not match.get("osm_id"):
+        return None
+    return _OVERPASS_RELATION_AREA_OFFSET + int(match["osm_id"])
+
+
+def _search_overpass(
+    tags: tuple[tuple[str, str], ...], location: str, limit: int
+) -> list[PlaceResult]:
+    """
+    Every node/way tagged with one of `tags`, inside the area `location`
+    resolves to. Raises `ProviderError` for every failure, same contract as
+    every other search function here -- including when `location` cannot be
+    resolved to an area at all, which is a `BAD_RESPONSE` (Overpass itself was
+    never reached) rather than a quiet empty result.
+    """
+    area_id = _geocode_area_id(location)
+    if area_id is None:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="osm", operation=_OVERPASS_OP,
+            message=f"{location!r} did not resolve to a map area",
+            user_message="That place could not be matched to a map area.",
+            user_action="Use a city, town or country name.",
+        )
+
+    clauses = "".join(
+        f'node["{key}"="{value}"](area.searchArea);'
+        f'way["{key}"="{value}"](area.searchArea);'
+        for key, value in tags
+    )
+    query = (
+        f"[out:json][timeout:25];area({area_id})->.searchArea;"
+        f"({clauses});out center {int(limit)};"
+    )
+
+    try:
+        response = requests.post(OVERPASS_URL, data={"data": query}, timeout=30)
+    except requests.exceptions.Timeout as exc:
+        raise classify_exception(exc, provider="osm", operation=_OVERPASS_OP) from exc
+    except requests.exceptions.RequestException as exc:
+        raise classify_exception(exc, provider="osm", operation=_OVERPASS_OP) from exc
+
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise classify_http_status(
+            429, response.text, provider="osm", operation=_OVERPASS_OP,
+            retry_after=float(retry_after) if retry_after else None,
+        )
+    if response.status_code != 200:
+        raise classify_http_status(
+            response.status_code, response.text, provider="osm", operation=_OVERPASS_OP,
+        )
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            ErrorCode.BAD_RESPONSE, provider="osm", operation=_OVERPASS_OP,
+            message=f"could not parse response as JSON: {exc}",
+        ) from exc
+
+    results: list[PlaceResult] = []
+    for element in payload.get("elements", []):
+        tags_found = element.get("tags") or {}
+        name = (tags_found.get("name") or "").strip()
+        if not name:
+            # An unnamed node matching the tag (a bench, a bin) is not a lead.
+            continue
+        street = " ".join(
+            x for x in (
+                tags_found.get("addr:housenumber", ""), tags_found.get("addr:street", ""),
+            ) if x
+        )
+        address = ", ".join(
+            x for x in (street, tags_found.get("addr:city", "")) if x
+        )
+        category = next(
+            (tags_found[key] for key, _ in tags if key in tags_found), ""
+        )
+        results.append(
+            PlaceResult(
+                name=name,
+                address=address,
+                website=tags_found.get("website") or tags_found.get("contact:website") or "",
+                phone=tags_found.get("phone") or tags_found.get("contact:phone") or "",
+                category=category,
+                source="osm",
+            )
+        )
+    return results[:limit]
+
+
+def search_local_structured(
+    term: str, location: str, limit: int = 20
+) -> ProviderResult[list[PlaceResult]]:
+    """
+    OpenStreetMap discovery for one category, preferring a structured Overpass
+    query over free text whenever `term` maps to a real OSM tag.
+
+    A category `osm_categories` does not recognise still gets a real search --
+    Nominatim's free-text path, exactly as before -- rather than being refused
+    outright; the metadata records which path actually answered, so a thin
+    result from an unmapped category is not mistaken for a mapped one that
+    genuinely found little. An Overpass failure (the service down, a malformed
+    area) degrades the same way rather than losing the search entirely.
+    """
+    from src.integrations.osm_categories import tags_for_category
+
+    tags = tags_for_category(term)
+    if tags is None:
+        return search_osm_only(build_query(term, location), limit)
+
+    try:
+        results = call_with_retries(_search_overpass, tags, location, limit)
+    except ProviderError as exc:
+        log.warning(
+            "structured OSM search failed for %r/%r (%s); falling back to free text",
+            term, location, exc,
+        )
+        result = search_osm_only(build_query(term, location), limit)
+        if result.ok:
+            result.metadata.setdefault("overpass_error", exc.code.value)
+        return result
+
+    return ProviderResult.success(
+        "osm", _OVERPASS_OP, results, metadata={"structured": True, "tags": list(tags)},
+    )
+
+
 def search_osm_only(query: str, limit: int = 20) -> ProviderResult[list[PlaceResult]]:
     """
-    OpenStreetMap only, regardless of whether a Google Places key is present.
+    OpenStreetMap free-text search only, regardless of whether a Google Places
+    key is present.
 
-    Used by the free `osm` discovery provider now that Google Maps is its own
-    selectable, connectable provider (`google_places`) rather than a hidden
-    preference this one used to apply on its own whenever a key happened to be
-    in the environment. `search()` below still does that combined,
-    Google-preferred-with-OSM-fallback behaviour -- it is what the
+    This is the fallback path -- see `search_local_structured` above for the
+    preferred, tag-based path a recognised category takes. Used directly only
+    when a category maps to no known OSM tag. `search()` below still does the
+    combined, Google-preferred-with-OSM-fallback behaviour -- it is what the
     `google_places` provider uses, so choosing Google Maps still degrades to
-    OpenStreetMap on a Google-side failure instead of stopping outright.
+    this on a Google-side failure instead of stopping outright.
     """
     try:
         results = call_with_retries(_search_nominatim, query, limit)
